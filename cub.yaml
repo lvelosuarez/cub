@@ -1,0 +1,10 @@
+name: cub
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.6
+  - snakemake=5.9.1
+  - bbmap=37.78
+  - kraken2=2.1.0
