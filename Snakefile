@@ -32,11 +32,12 @@ def get_raw_fastq(id):
 ###############################
 rule all:
     input:
-        expand("results/03_human/{sample}.report", sample = sample_id),
+        expand("results/03_not_human/{sample}.report", sample = sample_id),
         "results/QC/multiqc_report.html",
         "results/temp/Nreads_raw.txt",
         "results/temp/Nreads_qc.txt",
-        "results/temp/Nreads_nothumain_1.txt"
+        "results/temp/Nreads_nothumain_1.txt",
+        "results/temp/Nreads_nothumain_2.txt"
 
 rule merge_lanes:
     input: 
@@ -105,20 +106,20 @@ rule kraken2_microbio:
         r1 = rules.filter_human2.output.r1,
         r2 = rules.filter_human2.output.r2,
     output:
-        out = "results/03_human/{sample}.report"
+        out = "results/03_not_human/{sample}.report"
     params:
         ref = MICROBIO
     shell:
-        "kraken2 --db {params.ref} --threads 20 --paired --gzip-compressed {input.r1} {input.r2} --output '-' --report {output.out} "
+        "kraken2 --db {params.ref} --threads 10 --paired --gzip-compressed {input.r1} {input.r2} --output '-' --report {output.out} "
 
-####### Rules for qc ######
+####### Rules QC ######
 rule fastqc:
     input: 
-        "results/00_raw/{sample}_{i}.fastq.gz"
+        expand("results/00_raw/{sample}_{i}.fastq.gz", sample=sample_id, i=i)
     output: 
-        html= temp("results/QC/{sample}_{i}_fastqc.html"),
-        zip = temp("results/QC/{sample}_{i}_fastqc.zip")
-    wrapper: "v1.1.0/bio/fastqc"
+        expand("results/QC/{sample}_{i}_fastqc.html", sample=sample_id, i=i)
+    shell: 
+        "fastqc -o results/QC -t 10 {input}"
 
 rule multiqc:
     input: 
@@ -126,7 +127,8 @@ rule multiqc:
                 "results/QC/{sample}_{i}_fastqc.zip",],sample=sample_id,i=i)
     output: 
         "results/QC/multiqc_report.html"
-    wrapper: "v1.1.0/bio/multiqc"
+    shell:
+        "multiqc results/QC -o results/QC"
 ## Count reads 
 rule count_raw_reads:
     input:
@@ -179,3 +181,22 @@ rule count_nothuman_1_reads:
         sed 's/,//g'| 
         sed 's/ /,/g' > {output.nreads}
         """
+rule count_nothuman_2_reads:
+    input:
+        r1 = expand('results/03_not_human/{sample}.report', sample = sample_id)
+    output:
+        nreads = "results/temp/Nreads_nothumain_2.txt"
+    params:
+        awk = """awk '/Homo sapiens/{print FILENAME , $2}'"""
+    shell:
+        """ 
+        {params.awk} {input.r1} | 
+        sed 's/\.\///g' | 
+        sed 's/.report//g' | 
+        sed 's/results\/03_not_human\///g' |
+        sed 's/ /,/g' >  {output.nreads}
+        """
+#### Create report :
+rule report:
+    input:
+        

@@ -4,7 +4,14 @@ channels:
   - bioconda
   - defaults
 dependencies:
-  - python=3.6
-  - snakemake=5.9.1
-  - bbmap=37.78
-  - kraken2=2.1.0
+  - python
+  - pandas
+  - altair
+  - datapane
+  - plotly
+  - numpy
+  - snakemake
+  - bbmap
+  - kraken2
+  - fastqc
+  - multiqc
