@@ -7,7 +7,7 @@ from collections import defaultdict
 def get_sample_files(path, outfile = 'samples.tsv'):
     samples = defaultdict(dict)
     pattern = "results"
-    for dir_names, _, files in os.walk(os.path.abspath('DATA')):
+    for dir_names, _, files in os.walk(os.path.abspath(path)):
         if pattern in dir_names:
             continue
         for fname in files:
