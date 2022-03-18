@@ -243,7 +243,7 @@ rule report:
         df['percent'] = df['nonHuman'] / df['raw'] * 100
         df = df.drop(labels="Undetermined", axis=0)
         df =df.join(SampleSheet)
-        df.index = df.index.astype(int)
+        #df.index = df.index.astype(int)
         df = df[['Description','raw','quality','nonHuman','percent']].sort_index()
         df['Sample'] = df.index
         df = df[['Sample','Description','raw','quality','nonHuman','percent']]
@@ -273,9 +273,13 @@ rule report:
         table = table.pivot_table(index="name", columns="Sample", values="reads_root")
         table = table.drop(labels="Homo sapiens", axis=0)
         table = table.fillna(0)
-        table = table[table.columns.astype(int).sort_values().astype(str)]
+        #table = table[table.columns.astype(int).sort_values().astype(str)]
         table.loc[:,'Total'] = table.sum(axis=1)
         table = table[table["Total"] > 100]
+        table['Species'] = table.index
+        cols = list(table.columns)
+        cols = [cols[-1]] + cols[:-1]
+        table = table[cols]
         #######
         ## Create the report
         ######
@@ -290,15 +294,21 @@ rule report:
                         columns = 6
                     ),
                     '# Run NextSeq ' + os.path.basename(os.getcwd()),
+                    '## Results Overview',
                     dp.Group(
-                        dp.Group(
-                          dp.BigNumber(heading="Analized on",value = f"{date:%d-%m-%Y}"),
-                          dp.Plot(fig, caption = "Read lost per sample"),
-                          dp.Attachment(file = quality)
-                            ),
-                    dp.Table(df.style.format(precision=2, thousands=" ").hide().set_properties(subset=["Description","raw", "quality","nonHuman","percent"], **{'text-align': 'right'}), caption = "Number of reads in raw/qc fastq files and human amount proportion per sample"),
+                        dp.BigNumber(heading="Analized on",value = f"{date:%d-%m-%Y}"),
+                        dp.HTML(' <span style="display:inline-block;border:0.01px solid #FFFFFF;width:150px;height:50px;"></span>'),
+                        dp.HTML(' <span style="display:inline-block;border:0.01px solid #FFFFFF;width:150px;height:50px;"></span>'),
+                        dp.HTML(' <span style="display:inline-block;border:0.01px solid #FFFFFF;width:150px;height:50px;"></span>'),
+                        dp.Attachment(file = quality),
+                        columns = 5
+                    ),
+                    dp.Group(
+                        dp.Plot(fig, caption = "Read lost per sample"),
+                        dp.Table(df.style.format(precision=2, thousands=" ").hide().set_properties(subset=["Description","raw", "quality","nonHuman","percent"], **{'text-align': 'right'}), caption = "Number of reads in raw/qc fastq files and human amount proportion per sample"),
                     columns = 2
                     ),
-                    dp.DataTable(table)
+                    '## CUB metagenomics data explorer: Sample Comparison',
+                    dp.Table(table.style.format(precision=0,thousands=" ").hide().set_properties(**{'text-align': 'right'}))
                     )                        
         report.save(path = 'results/' + os.path.basename(os.getcwd()) + '.html', formatting=dp.ReportFormatting(text_alignment=dp.TextAlignment.CENTER, width=dp.ReportWidth.FULL))

@@ -7,15 +7,16 @@ source /home/lvelo/miniconda3/etc/profile.d/conda.sh
 # Runs the whole bash and snakemake pipeline.  
 
 RUN_NAME=$1
-NAS="/mnt/R60-11/Bacterio/metagenomique_NextSeq/"
+NAS="/mnt/R60-11/Bacterio/metagenomique_NextSeq"
 
 RUN_FOLDER=${NAS}/${RUN_NAME}
 
-PROJECT_PATH="/DATA/share/microbio/cub/"
+PROJECT_PATH="/DATA/share/microbio/cub"
 
 # activate cub environment
 conda activate cub
 # RUN_FOLDER the pipeline
+echo $RUN_FOLDER
 python $PROJECT_PATH/create_table.py $RUN_FOLDER
-snakemake -nfp -d $RUN_FOLDER -s $PROJECT_PATH/Snakefile
-#snakemake --use-conda -j 2 -d $RUN_FOLDER
+#snakemake -nfp -d $RUN_FOLDER -s $PROJECT_PATH/Snakefile
+snakemake -d $RUN_FOLDER -s $PROJECT_PATH/Snakefile -j 1
