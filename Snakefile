@@ -16,6 +16,8 @@ import pandas as pd
 ##### DEFINE PATHS
 HUMAN = "/DATA/share/microbio/kraken2_databases/HUMAN"
 MICROBIO = "/DATA/share/microbio/kraken2_databases/KRAKEN2"
+special = "/DATA/share/microbio/kraken2_databases/special"
+INDEX = "/DATA/share/microbio/centrifuge/p_compressed+h+v"
 #### DEFINE samples names
 df = pd.read_csv('samples.tsv', sep='\t', index_col=0)
 df['sample'] = df.index.to_series().str.split('_').str[0]
@@ -30,7 +32,11 @@ def get_raw_fastq(id):
 ###############################
 rule all:
     input:
-        expand("results/03_not_human/report/{sample}.report", sample = sample_id),
+        expand("results/03_not_human/report/{sample}.kraken", sample = sample_id),
+        expand("results/03_not_human/report/{sample}.silva.kraken", sample =sample_id),
+        #expand("results/03_not_human/report/{sample}.centrifuge", sample =sample_id),
+        #expand("results/03_not_human/report/{sample}.report.centrifuge", sample =sample_id),
+        expand("results/03_not_human/report/{sample}.centrifuge.kraken", sample =sample_id),
         "results/QC/multiqc_report.html",
         "results/temp/Nreads_raw.txt",
         "results/temp/Nreads_qc.txt",
@@ -105,12 +111,38 @@ rule kraken2_microbio:
         r1 = rules.filter_human2.output.r1,
         r2 = rules.filter_human2.output.r2,
     output:
-        out = "results/03_not_human/report/{sample}.report"
+        out = "results/03_not_human/report/{sample}.kraken"
     params:
         ref = MICROBIO
     shell:
         "kraken2 --db {params.ref} --threads 10 --paired --gzip-compressed {input.r1} {input.r2} --output '-' --report {output.out} "
+rule kraken2_silva:
+    input:
+        r1 = rules.filter_human2.output.r1,
+        r2 = rules.filter_human2.output.r2,
+    output:
+        out = "results/03_not_human/report_silva/{sample}.report"
+    shell:
+        "kraken2 --db {special} --threads 10 --paired --gzip-compressed {input.r1} {input.r2} --output '-' --report {output.out} "
 
+#rule centrifuge:
+#    input:
+#        r1 = rules.filter_human2.output.r1,
+#        r2 = rules.filter_human2.output.r2,
+#    output: 
+#        out = "results/03_not_human/report/{sample}.centrifuge",
+#        report = "results/03_not_human/report/{sample}.centrifuge.report"
+#    threads:
+#        10
+#    shell:
+#        "centrifuge -x {INDEX} -1 {input.r1} -2 {input.r2} -S {output.out} --report-file {output.report}  -p {threads}"
+#rule kreport:
+#        input:
+#           rules.centrifuge.output.out,
+#        output:
+#            "results/03_not_human/report/{sample}.centrifuge.kraken"
+#        shell:
+#            "centrifuge-kreport -x {INDEX} {input} > {output}"
 ####### Rules QC ######
 rule fastqc:
     input: 
@@ -228,12 +260,12 @@ rule report:
         ###
         ## Charge txt files to calculate datatable for raw/humans reads
         #### Read sample sheet from run info
-        with open('SampleSheet.csv', 'r') as csvfile:
-            lines = csvfile.readlines()
-        sections = [lines.index(line) for line in lines if "[" in line]
-        SampleSheet = lines[sections[3]+2:]
-        header = lines[sections[3]+1].split(sep=",")
-        SampleSheet = pd.DataFrame([line.split(",") for line in SampleSheet], columns = header)[['Sample_ID','Description']].set_index('Sample_ID')
+        #with open('SampleSheet.csv', 'r') as csvfile:
+        #    lines = csvfile.readlines()
+        #sections = [lines.index(line) for line in lines if "[" in line]
+        #SampleSheet = lines[sections[3]+2:]
+        #header = lines[sections[3]+1].split(sep=",")
+        #SampleSheet = pd.DataFrame([line.split(",") for line in SampleSheet], columns = header)[['Sample_ID','Description']].set_index('Sample_ID')
         ##### Read info from cub
         df = pd.read_table(input[0], sep=",",names=['raw'],index_col=0)
         df = df.join(pd.read_table(input[1], sep=",",names=['quality'],index_col=0))
@@ -242,13 +274,13 @@ rule report:
         df['nonHuman'] = df["human1"] - df["human2"]
         df['percent'] = df['nonHuman'] / df['raw'] * 100
         df = df.drop(labels="Undetermined", axis=0)
-        df =df.join(SampleSheet)
+        #df =df.join(SampleSheet)
         #df.index = df.index.astype(int)
-        df = df[['Description','raw','quality','nonHuman','percent']].sort_index()
+        df = df[['raw','quality','nonHuman','percent']].sort_index()
         df['Sample'] = df.index
-        df = df[['Sample','Description','raw','quality','nonHuman','percent']]
+        df = df[['Sample','raw','quality','nonHuman','percent']]
         df1 = pd.melt(df[['Sample','raw','quality','nonHuman']], id_vars=['Sample'], value_vars=['raw','quality','nonHuman'], var_name='steps', value_name='reads')
-        fig = px.line(df1, x="steps", y="reads", color='Sample', markers=True, log_y=True) 
+        fig = px.line(df1, x="steps", y="reads", color='Sample', markers = True, log_y=True) 
         #### 
         ## Charge all kraken reports and use SPECIES info
         def input_dir(dir):

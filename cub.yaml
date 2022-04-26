@@ -1,17 +1,18 @@
-name: cub
+name: cub_3_8
 channels:
   - conda-forge
   - bioconda
   - defaults
 dependencies:
-  - python
-  - pandas
+  - python=3.8
+  - pandas=1.4.2
   - altair
-  - datapane
+  - datapane=0.14.0
   - plotly
   - numpy
   - snakemake
   - bbmap
+  - fastp
   - kraken2
   - fastqc
   - multiqc
