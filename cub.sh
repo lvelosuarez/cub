@@ -14,7 +14,7 @@ RUN_FOLDER=${NAS}/${RUN_NAME}
 PROJECT_PATH="/DATA/share/microbio/cub"
 
 # activate cub environment
-conda activate cub
+conda activate cub_3_8
 # RUN_FOLDER the pipeline
 echo $RUN_FOLDER
 python $PROJECT_PATH/create_table.py $RUN_FOLDER
