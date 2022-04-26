@@ -33,10 +33,7 @@ def get_raw_fastq(id):
 rule all:
     input:
         expand("results/03_not_human/report/{sample}.kraken", sample = sample_id),
-        expand("results/03_not_human/report/{sample}.silva.kraken", sample =sample_id),
-        #expand("results/03_not_human/report/{sample}.centrifuge", sample =sample_id),
-        #expand("results/03_not_human/report/{sample}.report.centrifuge", sample =sample_id),
-        expand("results/03_not_human/report/{sample}.centrifuge.kraken", sample =sample_id),
+        expand("results/03_not_human/report/{sample}.silva", sample =sample_id),
         "results/QC/multiqc_report.html",
         "results/temp/Nreads_raw.txt",
         "results/temp/Nreads_qc.txt",
@@ -51,6 +48,7 @@ rule merge_lanes:
         r1 = 'results/00_raw/{sample}_R1.fastq.gz',
         r2 = 'results/00_raw/{sample}_R2.fastq.gz'
     shell: """
+ 
     zcat {input.r1} | pigz -p 10 > {output.r1}
     zcat {input.r2} | pigz -p 10 > {output.r2}
     """
@@ -65,7 +63,7 @@ rule QC:
     shell: 
         """
         bbduk.sh in={input.r1} in2={input.r2} \
-        ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa \
+        ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa  \
         out={output.r1} out2={output.r2} \
         qtrim=rl trimq=20 maq=20  minlen=100       
         """
@@ -121,7 +119,7 @@ rule kraken2_silva:
         r1 = rules.filter_human2.output.r1,
         r2 = rules.filter_human2.output.r2,
     output:
-        out = "results/03_not_human/report_silva/{sample}.report"
+        out = "results/03_not_human/report/{sample}.silva"
     shell:
         "kraken2 --db {special} --threads 10 --paired --gzip-compressed {input.r1} {input.r2} --output '-' --report {output.out} "
 
@@ -213,7 +211,7 @@ rule count_nothuman_1_reads:
         """
 rule count_nothuman_2_reads:
     input:
-        r1 = expand('results/03_not_human/report/{sample}.report', sample = sample_id)
+        r1 = expand('results/03_not_human/report/{sample}.kraken', sample = sample_id)
     output:
         nreads = "results/temp/Nreads_nothumain_2.txt"
     params:
@@ -260,12 +258,12 @@ rule report:
         ###
         ## Charge txt files to calculate datatable for raw/humans reads
         #### Read sample sheet from run info
-        #with open('SampleSheet.csv', 'r') as csvfile:
-        #    lines = csvfile.readlines()
-        #sections = [lines.index(line) for line in lines if "[" in line]
-        #SampleSheet = lines[sections[3]+2:]
-        #header = lines[sections[3]+1].split(sep=",")
-        #SampleSheet = pd.DataFrame([line.split(",") for line in SampleSheet], columns = header)[['Sample_ID','Description']].set_index('Sample_ID')
+        with open('SampleSheet.csv', 'r') as csvfile:
+            lines = csvfile.readlines()
+        sections = [lines.index(line) for line in lines if "[" in line]
+        SampleSheet = lines[sections[3]+2:]
+        header = lines[sections[3]+1].split(sep=",")
+        SampleSheet = pd.DataFrame([line.split(",") for line in SampleSheet], columns = header)[['Sample_ID','Description']].set_index('Sample_ID')
         ##### Read info from cub
         df = pd.read_table(input[0], sep=",",names=['raw'],index_col=0)
         df = df.join(pd.read_table(input[1], sep=",",names=['quality'],index_col=0))
@@ -274,8 +272,8 @@ rule report:
         df['nonHuman'] = df["human1"] - df["human2"]
         df['percent'] = df['nonHuman'] / df['raw'] * 100
         df = df.drop(labels="Undetermined", axis=0)
-        #df =df.join(SampleSheet)
-        #df.index = df.index.astype(int)
+        df =df.join(SampleSheet)
+        df.index = df.index.astype(int)
         df = df[['raw','quality','nonHuman','percent']].sort_index()
         df['Sample'] = df.index
         df = df[['Sample','raw','quality','nonHuman','percent']]
@@ -305,9 +303,9 @@ rule report:
         table = table.pivot_table(index="name", columns="Sample", values="reads_root")
         table = table.drop(labels="Homo sapiens", axis=0)
         table = table.fillna(0)
-        #table = table[table.columns.astype(int).sort_values().astype(str)]
+        table = table[table.columns.astype(int).sort_values().astype(str)]
         table.loc[:,'Total'] = table.sum(axis=1)
-        table = table[table["Total"] > 100]
+        #table = table[table["Total"] > 100]
         table['Species'] = table.index
         cols = list(table.columns)
         cols = [cols[-1]] + cols[:-1]
