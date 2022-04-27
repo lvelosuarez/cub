@@ -24,10 +24,10 @@ df['sample'] = df.index.to_series().str.split('_').str[0]
 sample_id = list(df['sample'].unique())
 i =["R1","R2"]
 ########## USED FUNCTIONS ####
-def get_raw_fastq(id):
+def get_raw_fastq(samples):
     ''' return a dict with the path to the raw fastq files'''
-    r1 = list(df[df["sample"] == id]['R1'])
-    r2 = list(df[df["sample"] == id]['R2'])
+    r1 = list(df[df["sample"] == samples]['R1'])
+    r2 = list(df[df["sample"] == samples]['R2'])
     return {'r1': r1, 'r2': r2}
 ###############################
 rule all:
@@ -47,11 +47,11 @@ rule merge_lanes:
     output: 
         r1 = 'results/00_raw/{sample}_R1.fastq.gz',
         r2 = 'results/00_raw/{sample}_R2.fastq.gz'
-    shell: """
- 
-    zcat {input.r1} | pigz -p 10 > {output.r1}
-    zcat {input.r2} | pigz -p 10 > {output.r2}
-    """
+    shell: 
+        """
+        zcat {input.r1} | pigz -p 10 > {output.r1}
+        zcat {input.r2} | pigz -p 10 > {output.r2}
+        """
 
 rule QC:
     input:
@@ -220,8 +220,8 @@ rule count_nothuman_2_reads:
         """ 
         {params.awk} {input.r1} | 
         sed 's/\.\///g' | 
-        sed 's/.report//g' | 
-        sed 's/results\/03_not_human\///g' |
+        sed 's/.kraken//g' | 
+        sed 's/results\/03_not_human\/report\///g' |
         sed 's/ /,/g' >  {output.nreads}
         """
 #### Create report :
@@ -274,9 +274,9 @@ rule report:
         df = df.drop(labels="Undetermined", axis=0)
         df =df.join(SampleSheet)
         df.index = df.index.astype(int)
-        df = df[['raw','quality','nonHuman','percent']].sort_index()
+        df = df[['Description','raw','quality','nonHuman','percent']].sort_index()
         df['Sample'] = df.index
-        df = df[['Sample','raw','quality','nonHuman','percent']]
+        df = df[['Sample','Description','raw','quality','nonHuman','percent']]
         df1 = pd.melt(df[['Sample','raw','quality','nonHuman']], id_vars=['Sample'], value_vars=['raw','quality','nonHuman'], var_name='steps', value_name='reads')
         fig = px.line(df1, x="steps", y="reads", color='Sample', markers = True, log_y=True) 
         #### 
@@ -305,7 +305,7 @@ rule report:
         table = table.fillna(0)
         table = table[table.columns.astype(int).sort_values().astype(str)]
         table.loc[:,'Total'] = table.sum(axis=1)
-        #table = table[table["Total"] > 100]
+        table = table[table["Total"] > 100]
         table['Species'] = table.index
         cols = list(table.columns)
         cols = [cols[-1]] + cols[:-1]
