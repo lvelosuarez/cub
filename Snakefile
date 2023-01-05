@@ -15,7 +15,7 @@ import pandas as pd
 
 ##### DEFINE PATHS
 HUMAN = "/DATA/share/microbio/kraken2_databases/HUMAN"
-MICROBIO = "/DATA/share/microbio/kraken2_databases/KRAKEN2"
+MICROBIO = "/DATA/share/microbio/kraken2_databases/amazon"
 special = "/DATA/share/microbio/kraken2_databases/special"
 INDEX = "/DATA/share/microbio/centrifuge/p_compressed+h+v"
 #### DEFINE samples names
@@ -32,7 +32,7 @@ def get_raw_fastq(samples):
 ###############################
 rule all:
     input:
-        expand("results/03_not_human/report/{sample}.kraken", sample = sample_id),
+        expand("results/03_not_human/report/{sample}.krk", sample = sample_id),
         expand("results/03_not_human/report/{sample}.silva", sample =sample_id),
         "results/QC/multiqc_report.html",
         "results/temp/Nreads_raw.txt",
@@ -109,11 +109,12 @@ rule kraken2_microbio:
         r1 = rules.filter_human2.output.r1,
         r2 = rules.filter_human2.output.r2,
     output:
-        out = "results/03_not_human/report/{sample}.kraken"
+        out = "results/03_not_human/report/{sample}.kraken",
+        krk = "results/03_not_human/report/{sample}.krk"
     params:
         ref = MICROBIO
     shell:
-        "kraken2 --db {params.ref} --threads 10 --paired --gzip-compressed {input.r1} {input.r2} --output '-' --report {output.out} "
+        "kraken2 --db {params.ref} --threads 10 --paired --gzip-compressed {input.r1} {input.r2} --output {output.krk} --report {output.out} "
 rule kraken2_silva:
     input:
         r1 = rules.filter_human2.output.r1,
