@@ -1,0 +1,252 @@
+---
+title: "221006_NB501647_0200_AH5FWGBGXK"
+subtitle: "Analysis Kraken"
+author: "Lourdes Velo Suarez"
+date: last-modified
+date-format: "DD-MM-YYYY"
+title-block-banner: "#FFFFFF"
+title-block-banner-color: "#000000"
+format: 
+  html:
+    page-layout: full
+    embed-resources: true
+    smooth-scroll: true
+    theme: 
+      - cosmo
+    css: styles.css
+    fontsize: 0.9em
+    linestretch: 1.7
+    fontcolor: black
+    image: CHU-BREST_LOGO-2021_CMJN-2-300x205.png
+execute:
+  echo: false
+  warning: false
+  error: false
+---
+```{python}
+#  Charge libraries
+import sys 
+import os
+import pandas as pd
+import numpy as np
+```
+```{python}
+## Change path to desired run
+path = "/mnt/R60-11/Bacterio/metagenomique_NextSeq/221006_NB501647_0200_AH5FWGBGXK"
+os.chdir(path)
+## Charge qc file
+quality = "results/QC/multiqc_report.html"
+```
+```{python}
+# Charge SampleSheet
+#### Read sample sheet from run info
+with open('SampleSheet.csv', 'r') as csvfile:
+  lines = csvfile.readlines()
+sections = [lines.index(line) for line in lines if "[" in line]
+SampleSheet = lines[sections[3]+2:]
+header = lines[sections[3]+1].split(sep=",")
+SampleSheet = pd.DataFrame([line.split(",") for line in SampleSheet], columns = header)[['Sample_ID','Description']].set_index('Sample_ID')
+```
+```{python}
+df = pd.read_table("results/temp/Nreads_raw.txt", sep=",",names=['raw'],index_col=0)
+df = df.join(pd.read_table("results/temp/Nreads_qc.txt", sep=",",names=['quality'],index_col=0))
+df = df.join(pd.read_table("results/temp/Nreads_nothumain_1.txt", sep=",",names=['human1'],index_col=0))
+df = df.join(pd.read_table("results/temp/Nreads_nothumain_2.txt", sep=",",names=['human2'],index_col=0))
+df['nonHuman'] = df["human1"] - df["human2"]
+df['percent'] = df['nonHuman'] / df['raw'] * 100
+df = df.drop(labels="Undetermined", axis=0)
+
+df = df[['raw','quality','nonHuman','percent']].sort_index()
+df['Sample'] = df.index
+df = df[['Sample','raw','quality','nonHuman','percent']]
+df =df.join(SampleSheet)
+df.index = df.index.astype(int)
+df = df[['Description','raw','quality','nonHuman','percent']].sort_index()
+df['Sample'] = df.index
+df = df[['Sample','Description','raw','quality','nonHuman','percent']]
+ojs_define(count = df)
+```
+```{python}
+df1 = pd.melt(df[['Description','raw','quality','nonHuman']], id_vars=['Description'], value_vars=['raw','quality','nonHuman'], var_name='steps', value_name='reads')
+ojs_define(ploti = df1)
+```
+```{python}
+def input_dir(dir):
+	files=os.listdir(dir)
+	path=[]
+	for f in files:
+		fipath=os.path.join(dir,f)
+		path.append(fipath)	
+	return (path)
+filelist=input_dir('results/03_not_human/report/')
+alldf = []
+for file in filelist:
+  if 'Undetermined' in file:
+      continue
+  out = pd.read_csv(file, sep="\t", names=['percent','reads_root','reads_assigned','rank','taxon_id','name'])
+  out = out[out["rank"] == "S"]
+  out["name"] = out["name"].str.strip()
+  out["Sample"] = file.split("/")[-1].split(".")[0]
+  alldf.append(out)
+superdf = pd.concat(alldf)
+table = superdf[["name","reads_root", "Sample"]]
+table = table.pivot_table(index="name", columns="Sample", values="reads_root")
+table = table.drop(labels="Homo sapiens", axis=0)
+table = table.fillna(0)
+table = table[table.columns.astype(int).sort_values().astype(str)]
+table.loc[:,'Total'] = table.sum(axis=1)
+table = table[table["Total"] > 100]
+table['Species'] = table.index
+cols = list(table.columns)
+cols = [cols[-1]] + cols[:-1]
+table = table[cols]
+ojs_define(krk = table)
+```
+
+```{ojs}
+viewof values  = columns({
+  plot: Plot.plot({
+  marks: [
+    Plot.line(transpose(ploti), {
+      x: "steps" , 
+      y: "reads",
+      stroke: "Description",
+      strokeWidth: 2,
+      curve: "linear",
+    })
+  ],
+  height: 500, 
+  x: { nice:  true,
+      domain: ['raw','quality', 'nonHuman'],
+      align: 0.1},
+  y: { type: "log" },
+  marginLeft: 40,
+  marginRight: -10,
+  color: {
+    legend: true,
+    columns: "100px"
+    }
+  }), 
+  table : Inputs.table(transpose(count), {
+      columns: [
+        "Sample",
+        "Description",
+        "raw",
+        "quality",
+        "nonHuman",
+        "percent"
+      ],
+      header: {
+        Sample: "id",
+        Description: "sample",
+        raw: "nextseq",
+        quality: "quality",
+        NonHuman: "non human reads",
+        percent: "%",
+      },
+      format: {
+        percent: sparkbar(d3.max(transpose(count), d => d.percent)),
+        raw: x => x.toLocaleString("en").replaceAll(","," "),
+        quality: x => x.toLocaleString("en").replaceAll(","," "),
+        nonHuman: x => x.toLocaleString("en").replaceAll(","," "),
+      },
+      rows: 25,
+      style: 'compact'
+    })
+})
+```
+## Kraken results without filtering
+
+```{ojs}
+viewof search = Inputs.search(transpose(krk))
+Inputs.table(search,{
+  columns: [
+        "Species",
+        "Total",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25"
+      ],
+      format: {
+        Total: x => x.toLocaleString("en").replaceAll(","," "),
+        1: x => x.toLocaleString("en").replaceAll(","," "),
+        2: x => x.toLocaleString("en").replaceAll(","," "),
+        3: x => x.toLocaleString("en").replaceAll(","," "),
+        4: x => x.toLocaleString("en").replaceAll(","," "),
+        5: x => x.toLocaleString("en").replaceAll(","," "),
+        6: x => x.toLocaleString("en").replaceAll(","," "),
+        7: x => x.toLocaleString("en").replaceAll(","," "),
+        8: x => x.toLocaleString("en").replaceAll(","," "),
+        9: x => x.toLocaleString("en").replaceAll(","," "),
+        10: x => x.toLocaleString("en").replaceAll(","," "),
+        11: x => x.toLocaleString("en").replaceAll(","," "),
+        12: x => x.toLocaleString("en").replaceAll(","," "),
+        13: x => x.toLocaleString("en").replaceAll(","," "),
+        14: x => x.toLocaleString("en").replaceAll(","," "),
+        15: x => x.toLocaleString("en").replaceAll(","," "),
+        16: x => x.toLocaleString("en").replaceAll(","," "),
+        17: x => x.toLocaleString("en").replaceAll(","," "),
+        18: x => x.toLocaleString("en").replaceAll(","," "),
+        19: x => x.toLocaleString("en").replaceAll(","," "),
+        20: x => x.toLocaleString("en").replaceAll(","," "),
+        21: x => x.toLocaleString("en").replaceAll(","," "),
+        22: x => x.toLocaleString("en").replaceAll(","," "),
+        23: x => x.toLocaleString("en").replaceAll(","," "),
+        24: x => x.toLocaleString("en").replaceAll(","," "),
+        25: x => x.toLocaleString("en").replaceAll(","," ")
+      },
+  rows: 25
+})
+```
+```{ojs}
+d3 = require("https://d3js.org/d3.v5.min.js")
+import {columns} from "@bcardiff/observable-columns"
+
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+}
+function replaceAll(str, find, replace) {
+  return str.replace(new RegExp(escapeRegExp(find), 'g'), replace);
+}
+function sparkbar(max) {
+  return x => htl.html`<div style="
+    background: lightblue;
+    width: ${100 * x / max}%;
+    float: right;
+    padding-right: 3px;
+    box-sizing: border-box;
+    overflow: visible;
+    display: flex;
+    justify-content: end;">${x.toLocaleString("en").replace(","," ")}`
+}
+locale = d3.formatLocale({
+  decimal: ".",
+  thousands: " ",
+  grouping: [3],
+  currency: ["", "\u00a0€"],
+  minus: "\u2212",
+  percent: "\u202f%"
+})
+```

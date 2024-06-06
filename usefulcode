@@ -1,0 +1,58 @@
+```{ojs}
+viewof nonHuman = Inputs.range(d3.extent(transpose(count), d => d.nonHuman), {step: 1000, label: "Final reads"})
+```
+```{ojs}
+Inputs.table(transpose(count).filter(d => d.nonHuman < nonHuman * 1.1 && nonHuman * 0.9 < d.nonHuman),
+  {
+  columns: [
+    "Sample",
+    "Description",
+    "raw",
+    "quality",
+    "nonHuman",
+    "percent"
+  ],
+  header: {
+    Sample: "id",
+    Description: "sample",
+    raw: "nextseq",
+    quality: "quality",
+    NonHuman: "non human reads",
+    percent: "%",
+  },
+  format: {
+    percent: sparkbar(d3.max(transpose(count), d => d.percent))
+  },
+  rows: 25,
+  maxWidth: 840
+})
+```
+```{ojs}
+  
+  
+  
+  
+  
+  Plot.plot({
+  width,
+  marks: [
+    Plot.line(transpose(count), {
+      x: "steps",
+      y: "reads",
+    })
+  ]
+  }),
+```
+Plot.plot({
+  x: {
+    tickFormat: d3.format(".1f"), 
+    domain: [1, 10000], 
+    type: "linear", 
+    ticks: 5, 
+    line: true, 
+    nice: true
+  }, 
+  width: 802, 
+  marginRight: 50,
+  marginLeft: 50
+})

@@ -18,5 +18,5 @@ conda activate cub_3_8
 # RUN_FOLDER the pipeline
 echo $RUN_FOLDER
 python $PROJECT_PATH/create_table.py $RUN_FOLDER
-#snakemake -nfp -d $RUN_FOLDER -s $PROJECT_PATH/Snakefile --rerun-incomplete  
+#snakemake -nfp -d $RUN_FOLDER -s $PROJECT_PATH/Snakefile #--rerun-incomplete  
 snakemake -d $RUN_FOLDER -s $PROJECT_PATH/Snakefile -j 1
