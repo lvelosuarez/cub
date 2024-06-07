@@ -1,7 +1,7 @@
 """
 Author: L. Velo Suarez, lourdes.velosuarez@chu-brest.fr, lourdesvelo@gmail.com
 Created: February 2022
-Last Updated: February 2023
+Last Updated: June 2024
 Affiliation: CBAM (Centre Brestois Analyse Microbiota), CRHU Brest
 Aim: Snakemake workflow to process paired-end shot gun from Illumina reads (NextSeq)
 Run: snakemake -j3 
@@ -14,7 +14,10 @@ from glob import glob
 import pandas as pd 
 
 ##### DEFINE PATHS
-PlusPF = "/DATA/share/microbio/index_zone/kraken2/PlusPF/"
+#This is the proton path
+#PlusPF = "/DATA/share/microbio/index_zone/kraken2/PlusPF/"
+#Set fermion path
+PlusPF = "/data/lourdes/db/kraken2/PlusPF"
 #### DEFINE samples names
 df = pd.read_csv('samples.tsv', sep='\t', index_col=0)
 df['sample'] = df.index.to_series().str.split('_').str[0]
