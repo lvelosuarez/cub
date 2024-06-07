@@ -1,4 +1,4 @@
-name: cub_3_8
+name: cub
 channels:
   - conda-forge
   - bioconda
