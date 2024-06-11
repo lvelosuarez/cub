@@ -23,6 +23,6 @@ PROJECT_PATH="/data/lourdes/metagenomique_clinique"
 conda activate cub # fermion environment
 # RUN_FOLDER the pipeline
 echo $RUN_FOLDER
-#python $PROJECT_PATH/create_table.py $RUN_FOLDER
+python $PROJECT_PATH/create_table.py $RUN_FOLDER
 #snakemake -nfp -d $RUN_FOLDER -s $PROJECT_PATH/Snakefile #--rerun-incomplete  
-#snakemake -d $RUN_FOLDER -s $PROJECT_PATH/Snakefile -j 1
+snakemake -d $RUN_FOLDER -s $PROJECT_PATH/Snakefile -j 1
