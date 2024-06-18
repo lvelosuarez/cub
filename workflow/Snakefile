@@ -19,7 +19,7 @@ from collections import defaultdict
 
 # CREATE_TABLE=Path(workflow.basedir).parent / "scripts" / "create_table.py"
 
-def get_sample_df():
+def get_sample_df() -> pd.DataFrame:
     """
     Extract samples from NGS illumina folder
     """
@@ -46,15 +46,19 @@ def get_sample_df():
 SAMPLES = get_sample_df()
 
 
-def get_raw_fastq(sample):
+def get_raw_fastq(sample:str) -> dict:
     ''' return a dict with the path to the raw fastq files'''
-
-
     r1 =SAMPLES.query(f"sample == '{sample}'")["R1"].to_list()
     r2 =SAMPLES.query(f"sample == '{sample}'")["R2"].to_list()
     
     return {'r1': r1, 'r2': r2}
 
+rule all:
+    input:
+        expand("results/02_kraken2PlusPF/{sample}.krk", sample = SAMPLES["sample"].to_list()),
+        "results/QC/multiqc_report.html",
+        "results/temp/Nreads_raw.txt",
+        "results/temp/Nreads_qc.txt"
 
 rule merge_lanes:
     input: 
@@ -68,53 +72,39 @@ rule merge_lanes:
         zcat {input.r2} | pigz -p 10 > {output.r2}
         """
 
+rule QC:
+    input:
+        r1 = rules.merge_lanes.output.r1,
+        r2 = rules.merge_lanes.output.r2
+    output:
+        r1 = "results/01_QC/{sample}_R1.fastq.gz",
+        r2 = "results/01_QC/{sample}_R2.fastq.gz"
+    shell: 
+        """
+        bbduk.sh in={input.r1} in2={input.r2} \
+        ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa  \
+        out={output.r1} out2={output.r2} \
+        qtrim=rl trimq=20 maq=20  minlen=100       
+        """
+rule kraken:
+    input:
+        r1 = rules.QC.output.r1,
+        r2 = rules.QC.output.r2
+    output:
+        out = "results/02_kraken2PlusPF/{sample}.krk",
+        report = "results/02_kraken2PlusPF/{sample}.report"
+    params:
+        ref = config["PlusPF"]
+    threads:
+        20
+    shell:
+        """
+        kraken2 --db {params.ref} --threads {threads}\
+        --output {output.out} --report {output.report}  --report-minimizer-data \
+        --paired --gzip-compressed {input.r1} {input.r2}
+        """
 
-##### DEFINE PATHS
-#This is the proton path
-#PlusPF = "/DATA/share/microbio/index_zone/kraken2/PlusPF/"
-#Set fermion path
-# PlusPF = "/data/lourdes/db/kraken2/PlusPF"
-# #### DEFINE samples names
-# i =["R1","R2"]
-# ########## USED FUNCTIONS ####
-# ###############################
-# rule all:
-#     input:
-#         expand("results/02_kraken2PlusPF/{sample}.krk", sample = sample_id),
-#         "results/QC/multiqc_report.html",
-#         "results/temp/Nreads_raw.txt",
-#         "results/temp/Nreads_qc.txt"
 
-
-# rule QC:
-#     input:
-#         r1 = rules.merge_lanes.output.r1,
-#         r2 = rules.merge_lanes.output.r2
-#     output:
-#         r1 = "results/01_QC/{sample}_R1.fastq.gz",
-#         r2 = "results/01_QC/{sample}_R2.fastq.gz"
-#     shell: 
-#         """
-#         bbduk.sh in={input.r1} in2={input.r2} \
-#         ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa  \
-#         out={output.r1} out2={output.r2} \
-#         qtrim=rl trimq=20 maq=20  minlen=100       
-#         """
-# rule kraken:
-#     input:
-#         r1 = rules.QC.output.r1,
-#         r2 = rules.QC.output.r2
-#     output:
-#         out = "results/02_kraken2PlusPF/{sample}.krk",
-#         report = "results/02_kraken2PlusPF/{sample}.report"
-#     params:
-#         ref = PlusPF
-#     shell:
-#         """
-#         kraken2 --db {params.ref} --threads 10 \
-#         --output {output.out} --report {output.report}  --report-minimizer-data \
-#         --paired --gzip-compressed {input.r1} {input.r2}
-#         """
 # ####### Rules QC ######
 # rule fastqc:
 #     input: 
@@ -131,7 +121,7 @@ rule merge_lanes:
 #         "results/QC/multiqc_report.html"
 #     shell:
 #         "multiqc results/QC -o results/QC"
-# ## Count reads 
+# # ## Count reads 
 # rule count_raw_reads:
 #     input:
 #         r1 = expand('results/00_raw/{sample}_R1.fastq.gz', sample = sample_id)
