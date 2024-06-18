@@ -86,6 +86,8 @@ rule QC:
         out={output.r1} out2={output.r2} \
         qtrim=rl trimq=20 maq=20  minlen=100       
         """
+
+
 rule kraken:
     input:
         r1 = rules.QC.output.r1,
