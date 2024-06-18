@@ -1,0 +1,168 @@
+"""
+Author: L. Velo Suarez, lourdes.velosuarez@chu-brest.fr, lourdesvelo@gmail.com
+Created: February 2022
+Last Updated: June 2024
+Affiliation: CBAM (Centre Brestois Analyse Microbiota), CRHU Brest
+Aim: Snakemake workflow to process paired-end shot gun from Illumina reads (NextSeq)
+Run: snakemake -j3 
+Run for dag : snakemake --dag | dot -Tsvg > dag.svg
+Latest modification: 
+- create final rule for reporting
+"""
+import os
+from pathlib import Path
+import os
+import logging
+import pandas as pd
+import re
+from collections import defaultdict
+
+# CREATE_TABLE=Path(workflow.basedir).parent / "scripts" / "create_table.py"
+
+def get_sample_df():
+    """
+    Extract samples from NGS illumina folder
+    """
+    path = os.getcwd()
+    samples = defaultdict(dict)
+    pattern = "results"
+    for dir_names, _, files in os.walk(os.path.abspath(path)):
+        if pattern in dir_names:
+            continue
+        for fname in files:
+            if ".fastq" in fname or ".fq" in fname:
+                sample_id = fname.split(".fastq")[0].split(".fq")[0]
+                sample_id = sample_id.replace("_R1", "").replace("_R2", "").replace("_001", "").replace(" ", "-")
+                fq_path = os.path.join(dir_names, fname)
+                if "_R1" in fname:
+                    samples[sample_id]['R1'] = fq_path
+                else:
+                    samples[sample_id]['R2'] = fq_path
+    samples= pd.DataFrame(samples).T
+    samples = samples.reset_index()
+    samples["sample"] = samples["index"].str.extract("^(.+)_S\d+_L\d+$")
+    return samples
+
+SAMPLES = get_sample_df()
+
+
+def get_raw_fastq(sample):
+    ''' return a dict with the path to the raw fastq files'''
+
+
+    r1 =SAMPLES.query(f"sample == '{sample}'")["R1"].to_list()
+    r2 =SAMPLES.query(f"sample == '{sample}'")["R2"].to_list()
+    
+    return {'r1': r1, 'r2': r2}
+
+
+rule merge_lanes:
+    input: 
+        unpack(lambda wildcards: get_raw_fastq(wildcards.sample))
+    output: 
+        r1 = 'results/00_raw/{sample}_R1.fastq.gz',
+        r2 = 'results/00_raw/{sample}_R2.fastq.gz'
+    shell: 
+        """
+        zcat {input.r1} | pigz -p 10 > {output.r1}
+        zcat {input.r2} | pigz -p 10 > {output.r2}
+        """
+
+
+##### DEFINE PATHS
+#This is the proton path
+#PlusPF = "/DATA/share/microbio/index_zone/kraken2/PlusPF/"
+#Set fermion path
+# PlusPF = "/data/lourdes/db/kraken2/PlusPF"
+# #### DEFINE samples names
+# i =["R1","R2"]
+# ########## USED FUNCTIONS ####
+# ###############################
+# rule all:
+#     input:
+#         expand("results/02_kraken2PlusPF/{sample}.krk", sample = sample_id),
+#         "results/QC/multiqc_report.html",
+#         "results/temp/Nreads_raw.txt",
+#         "results/temp/Nreads_qc.txt"
+
+
+# rule QC:
+#     input:
+#         r1 = rules.merge_lanes.output.r1,
+#         r2 = rules.merge_lanes.output.r2
+#     output:
+#         r1 = "results/01_QC/{sample}_R1.fastq.gz",
+#         r2 = "results/01_QC/{sample}_R2.fastq.gz"
+#     shell: 
+#         """
+#         bbduk.sh in={input.r1} in2={input.r2} \
+#         ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa  \
+#         out={output.r1} out2={output.r2} \
+#         qtrim=rl trimq=20 maq=20  minlen=100       
+#         """
+# rule kraken:
+#     input:
+#         r1 = rules.QC.output.r1,
+#         r2 = rules.QC.output.r2
+#     output:
+#         out = "results/02_kraken2PlusPF/{sample}.krk",
+#         report = "results/02_kraken2PlusPF/{sample}.report"
+#     params:
+#         ref = PlusPF
+#     shell:
+#         """
+#         kraken2 --db {params.ref} --threads 10 \
+#         --output {output.out} --report {output.report}  --report-minimizer-data \
+#         --paired --gzip-compressed {input.r1} {input.r2}
+#         """
+# ####### Rules QC ######
+# rule fastqc:
+#     input: 
+#         expand("results/00_raw/{sample}_{i}.fastq.gz", sample=sample_id, i=i)
+#     output: 
+#         expand("results/QC/{sample}_{i}_fastqc.html", sample=sample_id, i=i)
+#     shell: 
+#         "fastqc -o results/QC -t 10 {input}"
+
+# rule multiqc:
+#     input: 
+#         expand("results/QC/{sample}_{i}_fastqc.html",sample=sample_id,i=i)
+#     output: 
+#         "results/QC/multiqc_report.html"
+#     shell:
+#         "multiqc results/QC -o results/QC"
+# ## Count reads 
+# rule count_raw_reads:
+#     input:
+#         r1 = expand('results/00_raw/{sample}_R1.fastq.gz', sample = sample_id)
+#     output:
+#         nreads= "results/temp/Nreads_raw.txt"
+#     params:
+#         awk = """awk '!/file/{print $1,$4}'"""
+#     threads:
+#         10 #config['threads']
+#     shell:
+#         """ 
+#         seqkit stats -j {threads} --basename {input.r1} | 
+#         {params.awk} | 
+#         sed 's/_R1.fastq.gz//' | 
+#         sed 's/,//g'| 
+#         sed 's/ /,/g' > {output.nreads}
+#         """
+# rule count_qc_reads:
+#     input:
+#         r1 = expand('results/01_QC/{sample}_R1.fastq.gz', sample = sample_id)
+#     output:
+#         nreads= "results/temp/Nreads_qc.txt"
+#     params:
+#         awk = """awk '!/file/{print $1,$4}'"""
+#     threads:
+#         10 #config['threads']
+#     shell:
+#         """ 
+#         seqkit stats -j {threads} --basename {input.r1} | 
+#         {params.awk} | 
+#         sed 's/_R1.fastq.gz//' | 
+#         sed 's/,//g'| 
+#         sed 's/ /,/g' > {output.nreads}
+#         """

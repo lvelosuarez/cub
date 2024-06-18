@@ -4,7 +4,10 @@ import logging
 import pandas as pd
 from collections import defaultdict
 
-def get_sample_files(path, outfile = 'samples.tsv'):
+def get_sample_files(path:str):
+    """
+    Extract samples from NGS illumina folder
+    """
     samples = defaultdict(dict)
     pattern = "results"
     for dir_names, _, files in os.walk(os.path.abspath(path)):
@@ -20,9 +23,10 @@ def get_sample_files(path, outfile = 'samples.tsv'):
                 else:
                     samples[sample_id]['R2'] = fq_path
     samples= pd.DataFrame(samples).T
-    samples.to_csv(os.path.abspath(path) + "/" + outfile,sep='\t')
-    
-    return samples
+    # samples.to_csv(os.path.abspath(path) + "/" + outfile,sep='\t')
+
+    print(samples.to_string())
+
 
 if __name__ == '__main__':
     import sys
