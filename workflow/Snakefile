@@ -99,7 +99,7 @@ rule dehost:
         bowtie2 --local --threads {threads}  \
         -x {params.ref} \
         -1 {input.r1} -2 {input.r2} | 
-        samtools fastq -f 12 -F 256 -1 {output.r1} -2 {output.r2}
+        samtools fastq -f 4 -1 {output.r1} -2 {output.r2}
         """
 def input_files_per_sampleR1(wildcards):
     lanes = SAMPLES[SAMPLES['sample'] == wildcards.sample]['lane']
@@ -133,7 +133,7 @@ rule kraken:
     shell:
         """
         kraken2 --db {params.ref} --threads {threads}\
-        --output {output.out} --report {output.report}  --report-minimizer-data --minimum-hit-groups 15 \
+        --output {output.out} --report {output.report}  --report-minimizer-data \
         --paired --gzip-compressed {input.r1} {input.r2}
         """
 rule make_pavian_file:
