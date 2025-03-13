@@ -1,0 +1,6 @@
+
+---
+
+PlusPF: "/data/bioinfo/data/kraken2/PlusPF/"
+human_38: "/data/bioinfo/data/hg38/hg38"
+threads: 15

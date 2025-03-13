@@ -4,7 +4,7 @@
 # source /home/lvelo/miniconda3/etc/profile.d/conda.sh 
 
 # fermion path
-source /data/lourdes/miniconda3/etc/profile.d/conda.sh
+#source /data/lourdes/miniconda3/etc/profile.d/conda.sh
 
 # This file is part of the cub taxonomic sequence classification system.
 # Runs the whole bash and snakemake pipeline.  
@@ -15,14 +15,16 @@ RUN_NAME=$1
 NAS="/data/lourdes/NAS"
 RUN_FOLDER=${NAS}/${RUN_NAME}
 
+RUN_FOLDER=$1
+
 # proton path 
 #PROJECT_PATH="/DATA/share/microbio/cub"
 # fermion path 
-PROJECT_PATH="/data/lourdes/metagenomique_clinique"
+PROJECT_PATH=$(pwd)
 # activate cub environment
 conda activate cub # fermion environment
 # RUN_FOLDER the pipeline
 echo $RUN_FOLDER
 python $PROJECT_PATH/create_table.py $RUN_FOLDER
 #snakemake -nfp -d $RUN_FOLDER -s $PROJECT_PATH/Snakefile #--rerun-incomplete
-snakemake -pd $RUN_FOLDER -s $PROJECT_PATH/Snakefile -j 5
+#snakemake -pd $RUN_FOLDER -s $PROJECT_PATH/Snakefile -j 5

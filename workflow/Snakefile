@@ -1,0 +1,164 @@
+"""
+Author: L. Velo Suarez, lourdes.velosuarez@chu-brest.fr, lourdesvelo@gmail.com
+Created: February 2022
+Last Updated: July 2024
+Affiliation: CBAM (Centre Brestois Analyse Microbiota), CRHU Brest
+Aim: Snakemake workflow to process paired-end shot gun from Illumina reads (NextSeq)
+Run: snakemake -j3 
+Run for dag : snakemake --dag | dot -Tsvg > dag.svg
+Latest modification: 
+- dehosting
+- counting reads per lane -> 19-07-2024
+"""
+ 
+import os
+from pathlib import Path
+import os
+import logging
+import pandas as pd
+import re
+from collections import defaultdict
+
+# CREATE_TABLE=Path(workflow.basedir).parent / "scripts" / "create_table.py"
+
+def get_sample_df() -> pd.DataFrame:
+    """
+    Extract samples from NGS illumina folder
+    """
+    path = os.getcwd()
+    samples = defaultdict(dict)
+    pattern1 = "output"
+    pattern2 = "results"
+    for dir_names, _, files in os.walk(os.path.abspath(path)):
+        if pattern1 in dir_names:
+        #if dir_names == "output" or dir_names == "results":
+               continue
+        for fname in files:
+            if ".fastq" in fname or ".fq" in fname:
+                sample_id = fname.split(".fastq")[0].split(".fq")[0]
+                sample_id = sample_id.replace("_R1", "").replace("_R2", "").replace("_001", "").replace(" ", "-")
+                fq_path = os.path.join(dir_names, fname)
+                if "_R1" in fname:
+                    samples[sample_id]['R1'] = fq_path
+                else:
+                    samples[sample_id]['R2'] = fq_path
+    samples= pd.DataFrame(samples).T
+    samples = samples.reset_index()
+    samples["sample"] = samples["index"].str.extract("^(.+)_S\d+_L\d+$")
+    samples["lane"] = samples["index"].str.extract("^.+_(S\d+_L\d+)$")
+    samples["names"] = samples["index"]
+    samples = samples[~ samples.names.str.startswith('Undet')]
+    return samples
+
+SAMPLES = get_sample_df()
+
+
+def get_raw_fastq(names:str) -> dict:
+    ''' return a dict with the path to the raw fastq files'''
+    r1 =SAMPLES.query(f"names == '{names}'")["R1"].to_list()
+    r2 =SAMPLES.query(f"names == '{names}'")["R2"].to_list()
+    
+    return {'r1': r1, 'r2': r2}
+
+rule all:
+    input:
+       expand("output/dehost/{names}_R1.fastq.gz", names = SAMPLES["names"].to_list()),
+       expand("output/kraken2/{sample}_R1.fastq.gz", sample = SAMPLES["sample"].to_list()),
+       expand("output/kraken2/{sample}.pavian", sample = SAMPLES["sample"].to_list()),
+       #expand("output/02_kraken2PlusPF/{sample}.krk", sample = SAMPLES["sample"].to_list()),
+       #"output/report/multiqc_report.html",
+       "output/Nreads.csv",
+
+include: "rules/count.smk"
+
+rule qc:       
+    input: unpack(lambda wildcards: get_raw_fastq(wildcards.names))
+    output:
+        r1 = "output/qc/{names}_R1.fastq.gz",
+        r2 = "output/qc/{names}_R2.fastq.gz"
+    shell: 
+        """
+        bbduk.sh in={input.r1} in2={input.r2} \
+        ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa  \
+        out={output.r1} out2={output.r2} \
+        qtrim=rl trimq=20 maq=20  minlen=100       
+        """
+
+rule dehost:
+    input:
+        r1 = "output/qc/{names}_R1.fastq.gz",
+        r2 = "output/qc/{names}_R2.fastq.gz"
+    output:
+        r1 = "output/dehost/{names}_R1.fastq.gz",
+        r2 = "output/dehost/{names}_R2.fastq.gz"
+    threads: 30
+    params:
+        ref = config["human_38"]
+    shell:
+        """
+        bowtie2 --local --threads {threads}  \
+        -x {params.ref} \
+        -1 {input.r1} -2 {input.r2} | 
+        samtools fastq -f 4 -1 {output.r1} -2 {output.r2}
+        """
+def input_files_per_sampleR1(wildcards):
+    lanes = SAMPLES[SAMPLES['sample'] == wildcards.sample]['lane']
+    return [f"output/dehost/{wildcards.sample}_{lane}_R1.fastq.gz" for lane in lanes]
+def input_files_per_sampleR2(wildcards):
+    lanes = SAMPLES[SAMPLES['sample'] == wildcards.sample]['lane']
+    return [f"output/dehost/{wildcards.sample}_{lane}_R2.fastq.gz" for lane in lanes]
+
+rule merge_lanes:
+    input: 
+        r1 = input_files_per_sampleR1,
+        r2 = input_files_per_sampleR2
+    output: 
+        r1 = 'output/kraken2/{sample}_R1.fastq.gz',
+        r2 = 'output/kraken2/{sample}_R2.fastq.gz'
+    shell: 
+        """
+        zcat {input.r1} | pigz -p 10 > {output.r1}
+        zcat {input.r2} | pigz -p 10 > {output.r2}
+        """
+rule kraken:
+    input:
+        r1 = rules.merge_lanes.output.r1,
+        r2 = rules.merge_lanes.output.r2
+    output:
+        out = "output/kraken2/{sample}.krk",
+        report = "output/kraken2/{sample}.report"
+    params:
+        ref = config["PlusPF"]
+    threads: 20
+    shell:
+        """
+        kraken2 --db {params.ref} --threads {threads}\
+        --output {output.out} --report {output.report}  --report-minimizer-data \
+        --paired --gzip-compressed {input.r1} {input.r2}
+        """
+rule make_pavian_file:
+    input:
+        report = rules.kraken.output.report
+    output:
+        pavian = "output/kraken2/{sample}.pavian"
+    shell:
+        """
+        cat {input.report} | awk 'BEGIN {{ FS = "\\t" }}; OFS = "\\t" {{print $1, $2, $3, $6, $7, $8}}' >  {output.pavian}
+        """
+
+# # ####### Rules QC ######
+# # rule fastqc:
+# #     input: 
+# #         expand("results/00_raw/{sample}_{i}.fastq.gz", sample=sample_id, i=i)
+# #     output: 
+# #         expand("results/QC/{sample}_{i}_fastqc.html", sample=sample_id, i=i)
+# #     shell: 
+# #         "fastqc -o results/QC -t 10 {input}"
+
+# # rule multiqc:
+# #     input: 
+# #         expand("results/QC/{sample}_{i}_fastqc.html",sample=sample_id,i=i)
+# #     output: 
+# #         "results/QC/multiqc_report.html"
+# #     shell:
+# #         "multiqc results/QC -o results/QC"
