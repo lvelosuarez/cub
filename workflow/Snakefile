@@ -89,17 +89,14 @@ rule dehost:
         r1 = "output/qc/{names}_R1.fastq.gz",
         r2 = "output/qc/{names}_R2.fastq.gz"
     output:
-        r1 = "output/dehost/{names}_R1.fastq.gz",
-        r2 = "output/dehost/{names}_R2.fastq.gz"
+       outdir = directory("output/dehost/{names}")
     threads: 30
-    params:
-        ref = config["human_38"]
+    conda: "hostile"
     shell:
         """
-        bowtie2 --local --threads {threads}  \
-        -x {params.ref} \
-        -1 {input.r1} -2 {input.r2} | 
-        samtools fastq -f 4 -1 {output.r1} -2 {output.r2}
+       hostile clean --fastq1 {input.r1} --fastq2 {input.r2} \
+       --index human-t2t-hla-argos985-mycob140 \
+       --aligner bowtie2 --offline --out-dir {output.outdir} --threads {threads}
         """
 def input_files_per_sampleR1(wildcards):
     lanes = SAMPLES[SAMPLES['sample'] == wildcards.sample]['lane']
