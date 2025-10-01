@@ -1,0 +1,6 @@
+
+---
+
+PlusPF: "/data/bioinfo/data/kraken2/PlusPF/"
+bartlett: "/data/bioinfo/data/gtdb/bartlett_index/bartlett"
+threads: 15

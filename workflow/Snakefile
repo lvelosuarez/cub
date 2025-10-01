@@ -1,6 +1,7 @@
+"""
 Author: L. Velo Suarez, lourdes.velosuarez@chu-brest.fr, lourdesvelo@gmail.com
 Created: February 2022
-Last Updated: March 2025
+Last Updated: April 2025
 Affiliation: CBAM (Centre Brestois Analyse Microbiota), CRHU Brest
 Aim: Snakemake workflow to process paired-end shot gun from Illumina reads (NextSeq)
 Run: snakemake -j3 
@@ -26,12 +27,9 @@ def get_sample_df() -> pd.DataFrame:
     """
     path = os.getcwd()
     samples = defaultdict(dict)
-    pattern1 = "output"
-    pattern2 = "results"
-    for dir_names, _, files in os.walk(os.path.abspath(path)):
-        if pattern1 in dir_names:
-        #if dir_names == "output" or dir_names == "results":
-               continue
+    excluded_dirs = {"output", "results"}
+    for dirpath, dirnames, files in os.walk(os.path.abspath(path)):
+    dirnames[:] = [d for d in dirnames if d not in excluded_dirs]
         for fname in files:
             if ".fastq" in fname or ".fq" in fname:
                 sample_id = fname.split(".fastq")[0].split(".fq")[0]
@@ -64,11 +62,11 @@ rule all:
        expand("output/qc/{names}_R1.fastq.gz", names = SAMPLES["names"].to_list()),
        expand("output/dehost/{names}_R1.clean_1.fastq.gz", names = SAMPLES["names"].to_list()),
        expand("output/dehost/{names}_R2.clean_2.fastq.gz", names = SAMPLES["names"].to_list()),
-       #expand("output/kraken2/{sample}_R1.fastq.gz", sample = SAMPLES["sample"].to_list()),
-       #expand("output/kraken2/{sample}.pavian", sample = SAMPLES["sample"].to_list()),
-       #expand("output/02_kraken2PlusPF/{sample}.krk", sample = SAMPLES["sample"].to_list()),
+       expand("output/merge/{sample}_R1.fastq.gz", sample = SAMPLES["sample"].to_list()),
+       expand("output/kraken2/{sample}.pavian", sample = SAMPLES["sample"].to_list()),
+       expand("output/bam/{sample}.bam", sample = SAMPLES["sample"].to_list()),
        #"output/report/multiqc_report.html",
-       #"output/Nreads.csv",
+       "output/Nreads.csv",
 
 include: "rules/count.smk"
 
@@ -95,44 +93,25 @@ rule dehost:
     conda: "hostile"
     shell:
         """
-       hostile clean --fastq1 {input.r1} --fastq2 {input.r2} \
-       --index human-t2t-hla-argos985-mycob140 \
-       --aligner bowtie2 --offline --out-dir output/dehost/ --threads {threads}
+        hostile clean --fastq1 {input.r1} --fastq2 {input.r2} \
+        --index human-t2t-hla-argos985-mycob140 \
+        --aligner bowtie2 --offline --out-dir output/dehost/ --threads {threads}
         """
 
-#rule dehost:
-#    input:
-#        r1 = "output/qc/{names}_R1.fastq.gz",
-#        r2 = "output/qc/{names}_R2.fastq.gz"
-#    output:
-#        r1 = "output/dehost/{names}_R1.fastq.gz",
-#        r2 = "output/dehost/{names}_R2.fastq.gz"
-#    threads: 30
-#    params:
-#        ref = config["human_38"]
-#    conda: 
-#        "hostile"
-#    shell:
-#      """
-#        bowtie2 --local --threads {threads}  \
-#        -x {params.ref} \
-#        -1 {input.r1} -2 {input.r2} | 
-#        samtools fastq -f 4 -1 {output.r1} -2 {output.r2}
-#        """
 def input_files_per_sampleR1(wildcards):
     lanes = SAMPLES[SAMPLES['sample'] == wildcards.sample]['lane']
-    return [f"output/dehost/{wildcards.sample}_{lane}_R1.fastq.gz" for lane in lanes]
+    return [f"output/dehost/{wildcards.sample}_{lane}_R1.clean_1.fastq.gz" for lane in lanes]
 def input_files_per_sampleR2(wildcards):
     lanes = SAMPLES[SAMPLES['sample'] == wildcards.sample]['lane']
-    return [f"output/dehost/{wildcards.sample}_{lane}_R2.fastq.gz" for lane in lanes]
+    return [f"output/dehost/{wildcards.sample}_{lane}_R2.clean_2.fastq.gz" for lane in lanes]
 
 rule merge_lanes:
     input: 
         r1 = input_files_per_sampleR1,
         r2 = input_files_per_sampleR2
     output: 
-        r1 = 'output/kraken2/{sample}_R1.fastq.gz',
-        r2 = 'output/kraken2/{sample}_R2.fastq.gz'
+        r1 = 'output/merge/{sample}_R1.fastq.gz',
+        r2 = 'output/merge/{sample}_R2.fastq.gz'
     shell: 
         """
         zcat {input.r1} | pigz -p 10 > {output.r1}
@@ -164,6 +143,22 @@ rule make_pavian_file:
         cat {input.report} | awk 'BEGIN {{ FS = "\\t" }}; OFS = "\\t" {{print $1, $2, $3, $6, $7, $8}}' >  {output.pavian}
         """
 
+rule barlett:
+    input:
+       r1 = rules.merge_lanes.output.r1,
+       r2 = rules.merge_lanes.output.r2
+    output:
+        bam = "output/bam/{sample}.bam",
+    params:
+        ref = config["bartlett"]
+    shell:
+       """
+       bowtie2 --local --sensitive --threads 30  \
+       -x {params.ref} \
+       -1 {input.r1} -2 {input.r2} | 
+       samtools view -bS | samtools sort -o {output.bam}
+       """
+ 
 # # ####### Rules QC ######
 # # rule fastqc:
 # #     input: 

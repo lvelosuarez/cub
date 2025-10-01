@@ -27,7 +27,7 @@ rule count_qc_reads:
         """
 rule count_dehost_reads:
     input:
-        r1 = expand("output/dehost/{names}_R1.fastq.gz",names=SAMPLES.names.values)
+        r1 = expand("output/dehost/{names}_R1.clean_1.fastq.gz",names=SAMPLES.names.values)
     output:
         nreads= temp("output/Nreads_host.txt")
     threads:
@@ -36,7 +36,7 @@ rule count_dehost_reads:
         awk = """awk '!/file/{print $1,$4}'"""
     shell:
         """ 
-        seqkit stats -j {threads} --basename {input.r1} | {params.awk} | sed 's/_R1.fastq.gz//' | sed 's/,//g'| sed 's/ /,/g' > {output.nreads}
+        seqkit stats -j {threads} --basename {input.r1} | {params.awk} | sed 's/_R1.clean_1.fastq.gz//' | sed 's/,//g'| sed 's/ /,/g' > {output.nreads}
         """
 rule combine_read_counts:
     input:
