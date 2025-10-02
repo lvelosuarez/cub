@@ -29,12 +29,12 @@ def get_sample_df() -> pd.DataFrame:
     samples = defaultdict(dict)
     excluded_dirs = {"output", "results"}
     for dirpath, dirnames, files in os.walk(os.path.abspath(path)):
-    dirnames[:] = [d for d in dirnames if d not in excluded_dirs]
+        dirnames[:] = [d for d in dirnames if d not in excluded_dirs]
         for fname in files:
             if ".fastq" in fname or ".fq" in fname:
                 sample_id = fname.split(".fastq")[0].split(".fq")[0]
                 sample_id = sample_id.replace("_R1", "").replace("_R2", "").replace("_001", "").replace(" ", "-")
-                fq_path = os.path.join(dir_names, fname)
+                fq_path = os.path.join(dirpath, fname)
                 if "_R1" in fname:
                     samples[sample_id]['R1'] = fq_path
                 else:
