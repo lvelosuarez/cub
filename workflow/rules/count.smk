@@ -27,7 +27,7 @@ rule count_qc_reads:
         """
 rule count_dehost_reads:
     input:
-        r1 = expand("output/dehost/{names}_R1.clean_1.fastq.gz",names=SAMPLES.names.values)
+        r1 = expand("output/dehost/{names}_dedup_R1.clean_1.fastq.gz",names=SAMPLES.names.values)
     output:
         nreads= temp("output/Nreads_host.txt")
     threads:

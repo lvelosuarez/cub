@@ -1,12 +1,13 @@
 """
 Author: L. Velo Suarez, lourdes.velosuarez@chu-brest.fr, lourdesvelo@gmail.com
 Created: February 2022
-Last Updated: April 2025
+Last Updated: November  2025
 Affiliation: CBAM (Centre Brestois Analyse Microbiota), CRHU Brest
 Aim: Snakemake workflow to process paired-end shot gun from Illumina reads (NextSeq)
 Run: snakemake -j3 
 Run for dag : snakemake --dag | dot -Tsvg > dag.svg
-Latest modification: 
+Latest modification:
+- dedupe -> 29-10-2025
 - dehosting
 - counting reads per lane -> 19-07-2024
 """
@@ -60,8 +61,8 @@ def get_raw_fastq(names:str) -> dict:
 rule all:
     input:
        expand("output/qc/{names}_R1.fastq.gz", names = SAMPLES["names"].to_list()),
-       expand("output/dehost/{names}_R1.clean_1.fastq.gz", names = SAMPLES["names"].to_list()),
-       expand("output/dehost/{names}_R2.clean_2.fastq.gz", names = SAMPLES["names"].to_list()),
+       expand("output/dehost/{names}_dedup_R1.clean_1.fastq.gz", names = SAMPLES["names"].to_list()),
+       expand("output/dehost/{names}_dedup_R2.clean_2.fastq.gz", names = SAMPLES["names"].to_list()),
        expand("output/merge/{sample}_R1.fastq.gz", sample = SAMPLES["sample"].to_list()),
        expand("output/kraken2/{sample}.pavian", sample = SAMPLES["sample"].to_list()),
        expand("output/bam/{sample}.bam", sample = SAMPLES["sample"].to_list()),
@@ -75,35 +76,54 @@ rule qc:
     output:
         r1 = "output/qc/{names}_R1.fastq.gz",
         r2 = "output/qc/{names}_R2.fastq.gz"
+    log:
+        "output/qc/{names}_qc.log",
     shell: 
         """
         bbduk.sh in={input.r1} in2={input.r2} \
         ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa  \
         out={output.r1} out2={output.r2} 
-        qtrim=rl trimq=20 maq=20  minlen=100       
+        qtrim=rl trimq=20 maq=20  minlen=100 &> {log}       
         """
-rule dehost:    
+
+rule dedup:
     input:
         r1 = "output/qc/{names}_R1.fastq.gz",
         r2 = "output/qc/{names}_R2.fastq.gz"
     output:
-        r1 = "output/dehost/{names}_R1.clean_1.fastq.gz",
-        r2 = "output/dehost/{names}_R2.clean_2.fastq.gz"
+        r1 = "output/dedup/{names}_dedup_R1.fastq.gz",
+        r2 = "output/dedup/{names}_dedup_R2.fastq.gz"
+    log:
+        "output/qc/{names}_dedup.log",
+    shell:
+        """
+        clumpify.sh in={input.r1} in2={input.r2} \
+        out={output.r1} out2={output.r2} \
+        dedupe=t qin=33 addcount &> {log}
+        """    
+
+rule dehost:    
+    input:
+        r1 = "output/dedup/{names}_dedup_R1.fastq.gz",
+        r2 = "output/dedup/{names}_dedup_R2.fastq.gz"
+    output:
+        r1 = "output/dehost/{names}_dedup_R1.clean_1.fastq.gz",
+        r2 = "output/dehost/{names}_dedup_R2.clean_2.fastq.gz"
     threads: 10
     conda: "hostile"
     shell:
         """
         hostile clean --fastq1 {input.r1} --fastq2 {input.r2} \
         --index human-t2t-hla-argos985-mycob140 \
-        --aligner bowtie2 --offline --out-dir output/dehost/ --threads {threads}
+        --aligner bowtie2 --offline --out-dir output/dehost/ --threads {threads} --force
         """
 
 def input_files_per_sampleR1(wildcards):
     lanes = SAMPLES[SAMPLES['sample'] == wildcards.sample]['lane']
-    return [f"output/dehost/{wildcards.sample}_{lane}_R1.clean_1.fastq.gz" for lane in lanes]
+    return [f"output/dehost/{wildcards.sample}_{lane}_dedup_R1.clean_1.fastq.gz" for lane in lanes]
 def input_files_per_sampleR2(wildcards):
     lanes = SAMPLES[SAMPLES['sample'] == wildcards.sample]['lane']
-    return [f"output/dehost/{wildcards.sample}_{lane}_R2.clean_2.fastq.gz" for lane in lanes]
+    return [f"output/dehost/{wildcards.sample}_{lane}_dedup_R2.clean_2.fastq.gz" for lane in lanes]
 
 rule merge_lanes:
     input: 
