@@ -4,10 +4,8 @@ channels:
   - bioconda
   - defaults
 dependencies:
-  - python=3.8
-  - pandas=1.4.2
-  - altair
-  - datapane=0.14.0
+  - python
+  - pandas
   - plotly
   - numpy
   - snakemake
@@ -17,3 +15,4 @@ dependencies:
   - fastqc
   - multiqc
   - seqkit
+  - hostile

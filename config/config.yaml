@@ -1,6 +1,6 @@
 
 ---
 
-PlusPF: "/data/bioinfo/data/kraken2/PlusPF/"
-bartlett: "/data/bioinfo/data/gtdb/bartlett_index/bartlett"
+PlusPF: "/mnt/san/microbio/fermion/tl/kraken2/PlusPF20251015/"
+barlett: "/mnt/san/microbio/fermion/tl/gtdb/bartlett_index/bartlett"
 threads: 15

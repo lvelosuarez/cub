@@ -1,0 +1,28 @@
+[project]
+name = "pipeline Snakemake for meta clinique"
+version = "0.1.0"
+description = "My metagenomique pipeline roject using Ruff"
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Optional: this is mainly for packaging / `pip install .` later
+dependencies = [
+  "marimo",
+  "ruff",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "notebooks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks/*.py" = ["D"]  # e.g. ignore docstring rules for marimo notebooks
+
