@@ -1,0 +1,259 @@
+"""
+Author: L. Velo Suarez, lourdes.velosuarez@chu-brest.fr, lourdesvelo@gmail.com
+Created: February 2022
+Last Updated: March 2026
+Affiliation: CBAM (Centre Brestois Analyse Microbiota), CRHU Brest
+Aim: Snakemake workflow to process single-end shotgun Illumina reads (NextSeq)
+Run: snakemake -j3
+Run for dag : snakemake --dag | dot -Tsvg > dag.svg
+Latest modification:
+- SE adaptation -> 2026-03-13
+- dedupe -> 29-10-2025
+- dehosting
+- counting reads per lane -> 19-07-2024
+"""
+
+import os
+from pathlib import Path
+import logging
+import re
+from collections import defaultdict
+
+import pandas as pd
+
+
+###############################################
+# Sample table + helper functions
+###############################################
+
+def get_sample_df() -> pd.DataFrame:
+    """
+    Extract samples from NGS Illumina folder (single-end).
+
+    Handles:
+      - MG-Run35-Ech-9_S9_L004_R1_001.fastq.gz
+      - CasClinique3_ADN_R1.fastq.gz
+      - Any *.fastq, *.fastq.gz, *.fq, *.fq.gz
+
+    Columns created:
+      - index       : lane-level ID (used as "names")
+      - sample      : biological sample for old data (MG-Run35-Ech-9)
+      - lane        : lane info for old data (S9_L004)
+      - names       : same as index, used by wildcards.names
+      - sample_core : unified sample ID (sample if available, else names)
+      - R1          : raw fastq path (single-end)
+    """
+    path = os.getcwd()
+    samples = defaultdict(dict)
+    excluded_dirs = {"output", "results"}
+
+    for dirpath, dirnames, files in os.walk(os.path.abspath(path)):
+        dirnames[:] = [d for d in dirnames if d not in excluded_dirs]
+
+        for fname in files:
+            if not fname.endswith((".fastq", ".fastq.gz", ".fq", ".fq.gz")):
+                continue
+
+            # Skip R2 files entirely for single-end mode
+            if "_R2" in fname:
+                continue
+
+            stem = fname
+            for suf in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
+                if stem.endswith(suf):
+                    stem = stem[: -len(suf)]
+                    break
+
+            sample_id = (
+                stem
+                .replace("_R1_001", "")
+                .replace("_R1", "")
+                .replace(" ", "-")
+            )
+
+            fq_path = os.path.join(dirpath, fname)
+            samples[sample_id]["R1"] = fq_path
+
+    df = pd.DataFrame.from_dict(samples, orient="index")
+    df.index.name = "index"
+    df = df.reset_index()
+
+    df["sample"] = df["index"].str.extract(r"^(.+)_S\d+_L\d+$", expand=False)
+    df["lane"]   = df["index"].str.extract(r"^.+_(S\d+_L\d+)$", expand=False)
+    df["names"]  = df["index"]
+    df["sample_core"] = df["sample"].fillna(df["names"])
+
+    # Remove Undetermined
+    df = df[~df["names"].str.startswith("Undet")]
+
+    return df
+
+
+SAMPLES      = get_sample_df()
+SAMPLE_CORES = sorted(SAMPLES["sample_core"].unique())
+
+
+def get_raw_fastq(names: str) -> dict:
+    """Return raw fastq path for a given lane-level 'names' (single-end)."""
+    subset = SAMPLES.loc[SAMPLES["names"] == names]
+
+    if subset.empty:
+        raise ValueError(f"No sample found in SAMPLES for names == {names!r}")
+
+    r1 = [v for v in subset["R1"].tolist() if isinstance(v, str) and v.strip()]
+
+    import sys
+    print(f"[DEBUG] get_raw_fastq({names!r}) -> R1={r1}", file=sys.stderr)
+
+    if not r1:
+        raise ValueError(
+            f"Missing R1 for lane {names}.\n"
+            f"SAMPLES rows:\n{subset[['names','R1']]}"
+        )
+
+    return {"r1": r1}
+
+
+def get_dehost_fastq_for_sample(sample: str) -> dict:
+    """
+    Return dehosted fastq paths for a biological sample (possibly multiple lanes).
+
+    Input pattern (lane-level):
+      output/dehost/{names}_dedup_R1.clean.fastq.gz
+    """
+    subset = SAMPLES.loc[SAMPLES["sample_core"] == sample]
+
+    if subset.empty:
+        raise ValueError(f"No rows in SAMPLES for sample_core == {sample!r}")
+
+    r1 = [f"output/dehost/{n}_dedup_R1.clean.fastq.gz" for n in subset["names"]]
+
+    import sys
+    print(f"[DEBUG] get_dehost_fastq_for_sample({sample!r}) -> R1={r1}", file=sys.stderr)
+
+    return {"r1": r1}
+
+
+###############################################
+# Rules
+###############################################
+
+rule all:
+    input:
+        expand("output/qc/{names}_R1.fastq.gz",              names=SAMPLES["names"].to_list()),
+        expand("output/dehost/{names}_dedup_R1.clean.fastq.gz", names=SAMPLES["names"].to_list()),
+        expand("output/merge/{sample}_R1.fastq.gz",          sample=SAMPLE_CORES),
+        expand("output/kraken2/{sample}.pavian",              sample=SAMPLE_CORES),
+        expand("output/bam/{sample}.bam",                     sample=SAMPLE_CORES),
+        "output/Nreads.csv",
+
+
+include: "rules/count.smk"
+
+
+rule qc:
+    input:
+        unpack(lambda wildcards: get_raw_fastq(wildcards.names))
+    output:
+        r1 = "output/qc/{names}_R1.fastq.gz",
+    log:
+        "output/qc/{names}_bbduk.log"
+    shell:
+        """
+        bbduk.sh -Xmx16g \
+          in={input.r1} \
+          ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa \
+          out={output.r1} \
+          qtrim=rl trimq=20 maq=20 minlen=50 \
+          2> {log}
+        """
+
+
+rule dedup:
+    input:
+        r1 = "output/qc/{names}_R1.fastq.gz",
+    output:
+        r1 = "output/dedup/{names}_dedup_R1.fastq.gz",
+    log:
+        "output/qc/{names}_dedup.log",
+    shell:
+        """
+        clumpify.sh -Xmx16g \
+          in={input.r1} \
+          out={output.r1} \
+          dedupe=t qin=33 interleaved=f \
+          &> {log}
+        """
+
+
+rule dehost:
+    input:
+        r1 = "output/dedup/{names}_dedup_R1.fastq.gz",
+    output:
+        r1 = "output/dehost/{names}_dedup_R1.clean.fastq.gz",
+    threads: 10
+    shell:
+        """
+        hostile clean \
+          --fastq1 {input.r1} \
+          --index human-t2t-hla-argos985-mycob140 \
+          --aligner bowtie2 --airplane \
+          -o output/dehost/ --threads {threads} --force
+        """
+
+
+rule merge_lanes:
+    input:
+        unpack(lambda wildcards: get_dehost_fastq_for_sample(wildcards.sample))
+    output:
+        r1 = "output/merge/{sample}_R1.fastq.gz",
+    shell:
+        """
+        zcat {input.r1} | pigz -p 10 > {output.r1}
+        """
+
+
+rule kraken:
+    input:
+        r1 = rules.merge_lanes.output.r1,
+    output:
+        out    = "output/kraken2/{sample}.krk",
+        report = "output/kraken2/{sample}.report",
+    params:
+        ref = config["PlusPF"]
+    threads: 20
+    shell:
+        """
+        kraken2 --db {params.ref} --threads {threads} \
+          --output {output.out} --report {output.report} \
+          --report-minimizer-data \
+          --gzip-compressed {input.r1}
+        """
+
+
+rule make_pavian_file:
+    input:
+        report = rules.kraken.output.report,
+    output:
+        pavian = "output/kraken2/{sample}.pavian",
+    shell:
+        """
+        awk 'BEGIN {{ FS = "\\t" }}; OFS = "\\t" {{print $1, $2, $3, $6, $7, $8}}' \
+          {input.report} > {output.pavian}
+        """
+
+
+rule barlett:
+    input:
+        r1 = rules.merge_lanes.output.r1,
+    output:
+        bam = "output/bam/{sample}.bam",
+    params:
+        ref = config["barlett"]
+    shell:
+        """
+        bowtie2 --local --sensitive --threads 30 \
+          -x {params.ref} \
+          -U {input.r1} | \
+        samtools view -bS | samtools sort -o {output.bam}
+        """

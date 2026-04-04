@@ -1,58 +1,114 @@
-# Snakemake rules imported in the main Snakefile to count read numbers in raw/quality/cutadapter R1 files
+# rules/count.smk
+
+# ── helpers ────────────────────────────────────────────────────────────────
+# Strip lane suffix from seqkit basename to recover the sample_core
+# e.g.  TPOS-ADN_S8_L002_dedup_R1.clean_1.fastq.gz  →  TPOS-ADN
+AWK_SUM_BY_CORE = r"""awk 'NR>1 {
+    name = $1;
+    gsub(/_S[0-9]+_L[0-9]+_dedup_R1\.clean_1\.fastq\.gz$/, "", name);
+    sum[name] += $4
+} END {
+    for (s in sum) print s "," sum[s]
+}'"""
+
+AWK_SUM_BY_LANE = r"""awk 'NR>1 {
+    name = $1;
+    gsub(/_dedup_R1\.fastq\.gz$/, "", name);
+    sum[name] += $4
+} END {
+    for (s in sum) print s "," sum[s]
+}'"""
+
+
+# ── count raw reads (per lane, before QC) ─────────────────────────────────
 rule count_raw_reads:
     input:
-        r1 =  SAMPLES.R1.values
+        r1 = expand(
+            "{r1}",                               # raw paths from SAMPLES table
+            r1 = SAMPLES["R1"].dropna().tolist()
+        )
     output:
-        nreads= temp("output/Nreads_raw.txt")
+        nreads = temp("output/Nreads_raw.txt")
     threads:
-        config['threads']
-    params:
-        awk = """awk '!/file/{print $1,$4}'"""
+        config["threads"]
     shell:
-        """ 
-        seqkit stats -j {threads} --basename {input.r1} | {params.awk} | sed 's/_R1_001.fastq.gz//' | sed 's/,//g'| sed 's/ /,/g' > {output.nreads}
-        """ 
-rule count_qc_reads:
-    input:
-        r1 = expand("output/qc/{names}_R1.fastq.gz", names=SAMPLES.names.values)
-    output:
-        nreads= temp("output/Nreads_quality.txt")
-    threads:
-        config['threads']
-    params:
-        awk = """awk '!/file/{print $1,$4}'"""
-    shell:
-        """ 
-        seqkit stats -j {threads} --basename {input.r1} | {params.awk} | sed 's/_R1.fastq.gz//' | sed 's/,//g'| sed 's/ /,/g' > {output.nreads}
         """
+        seqkit stats -j {threads} --basename {input.r1} \
+            | awk 'NR>1 {{print $1","$4}}' \
+            > {output.nreads}
+        """
+
+
+# ── count deduped reads (per lane, after dedup) ───────────────────────────
+rule count_dedup_reads:
+    input:
+        r1 = expand(
+            "output/dedup/{names}_dedup_R1.fastq.gz",
+            names = SAMPLES["names"].tolist()
+        )
+    output:
+        nreads = temp("output/Nreads_dedup.txt")
+    threads:
+        config["threads"]
+    params:
+        awk = AWK_SUM_BY_LANE
+    shell:
+        """
+        seqkit stats -j {threads} --basename {input.r1} \
+            | {params.awk} \
+            > {output.nreads}
+        """
+
+
+# ── count dehosted reads (per lane, aggregated by sample_core) ────────────
 rule count_dehost_reads:
     input:
-        r1 = expand("output/dehost/{names}_dedup_R1.clean_1.fastq.gz",names=SAMPLES.names.values)
+        r1 = expand(
+            "output/dehost/{names}_dedup_R1.clean_1.fastq.gz",
+            names = SAMPLES["names"].tolist()     # <-- same pattern as rule all
+        )
     output:
-        nreads= temp("output/Nreads_host.txt")
+        nreads = temp("output/Nreads_host.txt")
     threads:
-        config['threads']
+        config["threads"]
     params:
-        awk = """awk '!/file/{print $1,$4}'"""
+        awk = AWK_SUM_BY_CORE
     shell:
-        """ 
-        seqkit stats -j {threads} --basename {input.r1} | {params.awk} | sed 's/_dedup_R1.clean_1.fastq.gz//' | sed 's/,//g'| sed 's/ /,/g' > {output.nreads}
         """
-rule combine_read_counts:
+        seqkit stats -j {threads} --basename {input.r1} \
+            | {params.awk} \
+            > {output.nreads}
+        """
+
+
+# ── merge all counts into one CSV ─────────────────────────────────────────
+rule merge_counts:
     input:
-        'output/Nreads_raw.txt',
-        'output/Nreads_quality.txt',
-        'output/Nreads_host.txt'
+        raw    = "output/Nreads_raw.txt",
+        dedup  = "output/Nreads_dedup.txt",
+        dehost = "output/Nreads_host.txt"
     output:
-        report('output/Nreads.csv', category="QC reads"),
+        csv = "output/Nreads.csv"
     run:
-        import pandas as pd
-        from natsort import natsorted
-        
-        D = pd.read_table(input[0],sep=",",names=['nextseq'],index_col=0)                                                                                               
-        D = D.join(pd.read_table(input[1],sep=",",names=['quality'],index_col=0))
-        D = D.join(pd.read_table(input[2],sep=",",names=['host'],index_col=0))
-        D = D[['nextseq','quality','host']]
-        sorted_index = natsorted(D.index)
-        D = D.reindex(sorted_index)
-        D.to_csv(output[0],sep=',')
+        import polars as pl
+
+        def read_counts(path, col_name):
+            return (
+                pl.read_csv(path, has_header=False,
+                            new_columns=["sample", col_name])
+            )
+
+        raw    = read_counts(input.raw,    "raw_reads")
+        dedup  = read_counts(input.dedup,  "dedup_reads")
+        dehost = read_counts(input.dehost, "dehost_reads")
+
+        (
+            raw
+            .join(dedup,  on="sample", how="left")
+            .join(dehost, on="sample", how="left")
+            .with_columns([
+                (pl.col("dedup_reads")  / pl.col("raw_reads")   * 100).round(1).alias("pct_kept_dedup"),
+                (pl.col("dehost_reads") / pl.col("dedup_reads") * 100).round(1).alias("pct_kept_dehost"),
+            ])
+            .write_csv(output.csv)
+        )
