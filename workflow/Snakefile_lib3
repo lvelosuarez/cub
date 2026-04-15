@@ -1,0 +1,310 @@
+"""
+Author: L. Velo Suarez, lourdes.velosuarez@chu-brest.fr, lourdesvelo@gmail.com
+Affiliation: CBAM (Centre Brestois Analyse Microbiota), CHRU Brest
+Aim: Snakemake workflow for lib3 — paired-end 75bp with poly-A tail tagging.
+
+Library design:
+  R1  — DNA fragment (~75bp)
+  R2  — 10bp poly-A tail, sequenced as poly-T
+  R2 is poly-T  → read originates from original sample DNA (pre-library-prep)
+  R2 is NOT poly-T → read likely introduced during library preparation / reagents
+
+Both streams (tagged / untagged) are kept and processed independently through
+the full pipeline. Never erase reads.
+
+Run:     snakemake -s workflow/Snakefile_lib3 --configfile config/config.yaml -j 20
+Dry-run: snakemake -s workflow/Snakefile_lib3 --configfile config/config.yaml -n
+DAG:     snakemake -s workflow/Snakefile_lib3 --configfile config/config.yaml --dag | dot -Tsvg > dag_lib3.svg
+"""
+
+import os
+from collections import defaultdict
+
+import pandas as pd
+
+
+###############################################
+# Sample table
+###############################################
+
+def get_sample_df() -> pd.DataFrame:
+    """
+    Discover paired-end FASTQ files for lib3.
+
+    Naming convention: {SAMPLE}_R1.fastq.gz / {SAMPLE}_R2.fastq.gz
+    No lane or S# component — single-lane runs.
+
+    Skips: output/, results/, microbial/  (microbial/ is output of a separate
+    BBMap/Kraken2 pipeline run on the sequencer — not our input).
+    """
+    path = os.getcwd()
+    samples = defaultdict(dict)
+    excluded_dirs = {"output", "results", "microbial"}
+
+    for dirpath, dirnames, files in os.walk(os.path.abspath(path)):
+        dirnames[:] = [d for d in dirnames if d not in excluded_dirs]
+
+        for fname in files:
+            if not fname.endswith((".fastq", ".fastq.gz", ".fq", ".fq.gz")):
+                continue
+
+            stem = fname
+            for suf in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
+                if stem.endswith(suf):
+                    stem = stem[: -len(suf)]
+                    break
+
+            sample_id = (
+                stem
+                .replace("_R1_001", "")
+                .replace("_R2_001", "")
+                .replace("_R1", "")
+                .replace("_R2", "")
+                .replace(" ", "-")
+            )
+
+            fq_path = os.path.join(dirpath, fname)
+            if "_R1" in fname:
+                samples[sample_id]["R1"] = fq_path
+            elif "_R2" in fname:
+                samples[sample_id]["R2"] = fq_path
+
+    df = pd.DataFrame.from_dict(samples, orient="index")
+    df.index.name = "index"
+    df = df.reset_index()
+
+    # lib3 has no lane component — names == sample_core
+    df["names"]       = df["index"]
+    df["sample_core"] = df["index"]
+
+    # Drop any entry missing R2 (safety check)
+    df = df.dropna(subset=["R1", "R2"])
+
+    # Remove Undetermined
+    df = df[~df["names"].str.startswith("Undet")]
+
+    return df
+
+
+SAMPLES      = get_sample_df()
+SAMPLE_CORES = sorted(SAMPLES["sample_core"].unique())
+STREAMS      = ["tagged", "untagged"]
+
+
+###############################################
+# Rules
+###############################################
+
+rule all:
+    input:
+        # QC
+        expand("output/qc/{sample}_R1.fastq.gz",     sample=SAMPLE_CORES),
+        # Poly-T split
+        expand("output/split/{sample}_{stream}_R1.fastq.gz", sample=SAMPLE_CORES, stream=STREAMS),
+        # Dedup
+        expand("output/dedup/{sample}_{stream}_dedup_R1.fastq.gz", sample=SAMPLE_CORES, stream=STREAMS),
+        # Dehost
+        expand("output/dehost/{sample}_{stream}_R1.clean_1.fastq.gz", sample=SAMPLE_CORES, stream=STREAMS),
+        # Kraken2 — PlusPF
+        expand("output/kraken2/{sample}_{stream}.pavian", sample=SAMPLE_CORES, stream=STREAMS),
+        # Kraken2 — EuPathDB
+        expand("output/kraken2_eupathdb/{sample}_{stream}.pavian", sample=SAMPLE_CORES, stream=STREAMS),
+        # Barlett BAM
+        expand("output/bam/{sample}_{stream}.bam", sample=SAMPLE_CORES, stream=STREAMS),
+        # Coverage
+        expand("output/coverage/{sample}_{stream}_coverage.txt", sample=SAMPLE_CORES, stream=STREAMS),
+        # Read counts
+        "output/Nreads.csv",
+
+
+include: "rules/count_lib3.smk"
+
+
+rule qc:
+    input:
+        r1 = lambda wc: SAMPLES.loc[SAMPLES["sample_core"] == wc.sample, "R1"].iloc[0],
+        r2 = lambda wc: SAMPLES.loc[SAMPLES["sample_core"] == wc.sample, "R2"].iloc[0],
+    output:
+        r1 = "output/qc/{sample}_R1.fastq.gz",
+        r2 = "output/qc/{sample}_R2.fastq.gz",
+    log:
+        "output/qc/{sample}_bbduk.log"
+    shell:
+        """
+        bbduk.sh -Xmx16g in={input.r1} in2={input.r2} \
+          ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa \
+          out={output.r1} out2={output.r2} \
+          qtrim=rl trimq=20 maq=20 minlen=50 \
+          entropy=0.5 entropywindow=50 skipr2=t \
+          2> {log}
+        """
+
+
+rule split_polyt:
+    """
+    Classify each read pair based on R2 poly-T content.
+    R2 is 19bp; poly-A tail appears as poly-T in the first ~10bp.
+
+    skipr1=t  — only test R2 for the poly-T k-mer
+    outm/outm2 — reads where R2 IS poly-T  → tagged  (genuine sample DNA)
+    out/out2   — reads where R2 is NOT poly-T → untagged (library-prep contaminant)
+    """
+    input:
+        r1 = "output/qc/{sample}_R1.fastq.gz",
+        r2 = "output/qc/{sample}_R2.fastq.gz",
+    output:
+        tagged_r1   = "output/split/{sample}_tagged_R1.fastq.gz",
+        tagged_r2   = "output/split/{sample}_tagged_R2.fastq.gz",
+        untagged_r1 = "output/split/{sample}_untagged_R1.fastq.gz",
+        untagged_r2 = "output/split/{sample}_untagged_R2.fastq.gz",
+    log:
+        "output/split/{sample}_split.log"
+    params:
+        literal = config["lib3"]["polyt_literal"],
+        k       = config["lib3"]["polyt_kmer"],
+        hdist   = config["lib3"]["polyt_hdist"],
+    shell:
+        """
+        bbduk.sh -Xmx8g \
+          in={input.r1} in2={input.r2} \
+          literal={params.literal} \
+          k={params.k} hdist={params.hdist} \
+          skipr1=t \
+          outm={output.tagged_r1}   outm2={output.tagged_r2} \
+          out={output.untagged_r1}  out2={output.untagged_r2} \
+          2> {log}
+        """
+
+
+rule dedup:
+    input:
+        r1 = "output/split/{sample}_{stream}_R1.fastq.gz",
+        r2 = "output/split/{sample}_{stream}_R2.fastq.gz",
+    output:
+        r1 = "output/dedup/{sample}_{stream}_dedup_R1.fastq.gz",
+        r2 = "output/dedup/{sample}_{stream}_dedup_R2.fastq.gz",
+    log:
+        "output/dedup/{sample}_{stream}_dedup.log"
+    shell:
+        """
+        clumpify.sh -Xmx16g \
+          in={input.r1} in2={input.r2} \
+          out={output.r1} out2={output.r2} \
+          dedupe=t qin=33 rename=t addcount=t shortname=t \
+          &> {log}
+        """
+
+
+rule dehost:
+    input:
+        r1 = "output/dedup/{sample}_{stream}_dedup_R1.fastq.gz",
+        r2 = "output/dedup/{sample}_{stream}_dedup_R2.fastq.gz",
+    output:
+        r1 = "output/dehost/{sample}_{stream}_R1.clean_1.fastq.gz",
+        r2 = "output/dehost/{sample}_{stream}_R2.clean_2.fastq.gz",
+    threads: 10
+    shell:
+        """
+        hostile clean \
+          --fastq1 {input.r1} --fastq2 {input.r2} \
+          --index human-t2t-hla-argos985-mycob140 \
+          --aligner bowtie2 --airplane \
+          -o output/dehost/ --threads {threads} --force
+        """
+
+
+rule kraken:
+    input:
+        r1 = "output/dehost/{sample}_{stream}_R1.clean_1.fastq.gz",
+        r2 = "output/dehost/{sample}_{stream}_R2.clean_2.fastq.gz",
+    output:
+        out    = "output/kraken2/{sample}_{stream}.krk",
+        report = "output/kraken2/{sample}_{stream}.report",
+    params:
+        ref = config["PlusPF"]
+    threads: config["threads"]
+    log:
+        "output/kraken2/{sample}_{stream}.log"
+    shell:
+        """
+        kraken2 --db {params.ref} --threads {threads} \
+          --output {output.out} --report {output.report} \
+          --report-minimizer-data \
+          --paired --gzip-compressed {input.r1} {input.r2} \
+          2> {log}
+        """
+
+
+rule make_pavian_file:
+    input:
+        report = "output/kraken2/{sample}_{stream}.report"
+    output:
+        pavian = "output/kraken2/{sample}_{stream}.pavian"
+    shell:
+        """
+        awk 'BEGIN {{ FS = "\\t" }}; OFS = "\\t" {{print $1, $2, $3, $6, $7, $8}}' \
+          {input.report} > {output.pavian}
+        """
+
+
+rule kraken_eupathdb:
+    input:
+        r1 = "output/dehost/{sample}_{stream}_R1.clean_1.fastq.gz",
+        r2 = "output/dehost/{sample}_{stream}_R2.clean_2.fastq.gz",
+    output:
+        out    = "output/kraken2_eupathdb/{sample}_{stream}.krk",
+        report = "output/kraken2_eupathdb/{sample}_{stream}.report",
+    params:
+        ref = config["eupathdb"]
+    threads: config["threads"]
+    log:
+        "output/kraken2_eupathdb/{sample}_{stream}.log"
+    shell:
+        """
+        kraken2 --db {params.ref} --threads {threads} \
+          --output {output.out} --report {output.report} \
+          --report-minimizer-data \
+          --paired --gzip-compressed {input.r1} {input.r2} \
+          2> {log}
+        """
+
+
+rule make_pavian_eupathdb:
+    input:
+        report = "output/kraken2_eupathdb/{sample}_{stream}.report"
+    output:
+        pavian = "output/kraken2_eupathdb/{sample}_{stream}.pavian"
+    shell:
+        """
+        awk 'BEGIN {{ FS = "\\t" }}; OFS = "\\t" {{print $1, $2, $3, $6, $7, $8}}' \
+          {input.report} > {output.pavian}
+        """
+
+
+rule barlett:
+    input:
+        r1 = "output/dehost/{sample}_{stream}_R1.clean_1.fastq.gz",
+        r2 = "output/dehost/{sample}_{stream}_R2.clean_2.fastq.gz",
+    output:
+        bam = "output/bam/{sample}_{stream}.bam",
+    params:
+        ref = config["barlett"]
+    threads: config["threads"]
+    shell:
+        """
+        bowtie2 --local --sensitive --threads {threads} \
+          -x {params.ref} \
+          -1 {input.r1} -2 {input.r2} | \
+        samtools view -bS | samtools sort -o {output.bam}
+        """
+
+
+rule coverage:
+    input:
+        bam = "output/bam/{sample}_{stream}.bam"
+    output:
+        txt = "output/coverage/{sample}_{stream}_coverage.txt"
+    shell:
+        """
+        samtools coverage {input.bam} -o {output.txt}
+        """

@@ -1,6 +1,12 @@
 
 ---
 
-PlusPF: "/mnt/san/microbio/fermion/tl/kraken2/PlusPF20251015/"
-barlett: "/mnt/san/microbio/fermion/tl/gtdb/bartlett_index/bartlett"
-threads: 15
+PlusPF:   "/mnt/san/microbio/fermion/tl/kraken2/PlusPF20251015/"
+barlett:  "/mnt/san/microbio/fermion/tl/gtdb/bartlett_index/bartlett"
+eupathdb: "/mnt/san/microbio/fermion/tl/kraken2/eupathdb48_20230407/"
+threads:  15
+
+lib3:
+  polyt_literal: "TTTTTTTTT"
+  polyt_kmer:    9
+  polyt_hdist:   1

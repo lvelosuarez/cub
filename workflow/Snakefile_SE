@@ -140,11 +140,13 @@ def get_dehost_fastq_for_sample(sample: str) -> dict:
 
 rule all:
     input:
-        expand("output/qc/{names}_R1.fastq.gz",              names=SAMPLES["names"].to_list()),
+        expand("output/qc/{names}_R1.fastq.gz",                 names=SAMPLES["names"].to_list()),
         expand("output/dehost/{names}_dedup_R1.clean.fastq.gz", names=SAMPLES["names"].to_list()),
-        expand("output/merge/{sample}_R1.fastq.gz",          sample=SAMPLE_CORES),
-        expand("output/kraken2/{sample}.pavian",              sample=SAMPLE_CORES),
-        expand("output/bam/{sample}.bam",                     sample=SAMPLE_CORES),
+        expand("output/merge/{sample}_R1.fastq.gz",             sample=SAMPLE_CORES),
+        expand("output/kraken2/{sample}.pavian",                 sample=SAMPLE_CORES),
+        expand("output/kraken2_eupathdb/{sample}.pavian",        sample=SAMPLE_CORES),
+        expand("output/bam/{sample}.bam",                        sample=SAMPLE_CORES),
+        expand("output/coverage/{sample}_coverage.txt",          sample=SAMPLE_CORES),
         "output/Nreads.csv",
 
 
@@ -165,6 +167,7 @@ rule qc:
           ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa \
           out={output.r1} \
           qtrim=rl trimq=20 maq=20 minlen=50 \
+          entropy=0.5 entropywindow=50 \
           2> {log}
         """
 
@@ -256,4 +259,47 @@ rule barlett:
           -x {params.ref} \
           -U {input.r1} | \
         samtools view -bS | samtools sort -o {output.bam}
+        """
+
+
+rule kraken_eupathdb:
+    input:
+        r1 = rules.merge_lanes.output.r1,
+    output:
+        out    = "output/kraken2_eupathdb/{sample}.krk",
+        report = "output/kraken2_eupathdb/{sample}.report",
+    params:
+        ref = config["eupathdb"]
+    threads: config["threads"]
+    log:
+        "output/kraken2_eupathdb/{sample}.log"
+    shell:
+        """
+        kraken2 --db {params.ref} --threads {threads} \
+          --output {output.out} --report {output.report} \
+          --report-minimizer-data \
+          --gzip-compressed {input.r1} \
+          2> {log}
+        """
+
+
+rule coverage:
+    input:
+        bam = "output/bam/{sample}.bam"
+    output:
+        txt = "output/coverage/{sample}_coverage.txt"
+    shell:
+        """
+        samtools coverage {input.bam} -o {output.txt}
+        """
+
+rule make_pavian_eupathdb:
+    input:
+        report = rules.kraken_eupathdb.output.report,
+    output:
+        pavian = "output/kraken2_eupathdb/{sample}.pavian",
+    shell:
+        """
+        awk 'BEGIN {{ FS = "\\t" }}; OFS = "\\t" {{print $1, $2, $3, $6, $7, $8}}' \
+          {input.report} > {output.pavian}
         """

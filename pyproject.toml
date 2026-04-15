@@ -1,14 +1,24 @@
 [project]
-name = "pipeline Snakemake for meta clinique"
-version = "0.1.0"
-description = "My metagenomique pipeline roject using Ruff"
+name = "cub"
+version = "0.2.0"
+description = "Clinical metagenomics pipeline (Snakemake) + statistical analysis (bonobo)"
 readme = "README.md"
 requires-python = ">=3.11"
 
-# Optional: this is mainly for packaging / `pip install .` later
+# Runtime dependencies for the bonobo analysis scripts (scripts/)
 dependencies = [
-  "marimo",
-  "ruff",
+  "polars>=1.0",
+  "numpy>=1.26",
+  "scipy>=1.12",
+  "pysam>=0.22",
+  "openpyxl>=3.1",   # post_analysis.py — Excel export
+  "marimo>=0.6",     # post_analysis.py — interactive notebook
+  "pyreadr>=0.5",    # load .rds taxonomy files
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.4",
 ]
 
 [build-system]
@@ -18,11 +28,22 @@ build-backend = "hatchling.build"
 [tool.ruff]
 line-length = 150
 target-version = "py311"
-src = ["src", "notebooks", "config", "workflow"]
+src = ["scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B"]
 
 [tool.ruff.lint.per-file-ignores]
-"notebooks/*.py" = ["D"]  # e.g. ignore docstring rules for marimo notebooks
+"scripts/post_analysis.py" = ["D"]  # marimo notebook — ignore docstring rules
 
+[tool.marimo.language_servers.pylsp]
+enabled = true
+enable_mypy = true
+enable_ruff = true
+enable_flake8 = false
+enable_pydocstyle = false
+enable_pylint = false
+enable_pyflakes = false
+
+[tool.marimo.diagnostics]
+enabled = true

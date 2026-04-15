@@ -1,30 +1,49 @@
-.snakemake
-.lintr.yml
-prep/
+# Snakemake
+.snakemake/
+output/
+results/
+
+# Pipeline run markers (written into sequencing run folders)
+.cub.lock
+.cub.done
+
 # Python
 __pycache__/
 *.pyc
+*.pyo
+.mypy_cache/
+.ruff_cache/
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Jupyter / Marimo
+.ipynb_checkpoints/
+__marimo__/
 
-# Misc temporary files
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Misc
 *.bak
+*.log
 
-# System specific files
+# Data outputs (should not be tracked)
+*.xlsx
+*.krk
 
-## Linux
-*~
-.Trash-*
-
-## macOS
+# macOS
 .DS_Store
 ._*
 .Trashes
 
-## Windows
+# Linux
+*~
+.Trash-*
+
+# Windows
 Thumbs.db
 [Dd]esktop.ini
 
-## Text Editors
-.vscode
+# Editors
+.vscode/
+.lintr.yml

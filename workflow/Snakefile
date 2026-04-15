@@ -218,8 +218,9 @@ rule all:
        expand("output/dehost/{names}_dedup_R2.clean_2.fastq.gz", names=SAMPLES["names"].to_list()),
        expand("output/merge/{sample}_R1.fastq.gz", sample=SAMPLE_CORES),
        expand("output/kraken2/{sample}.pavian", sample=SAMPLE_CORES),
+       expand("output/kraken2_eupathdb/{sample}.pavian", sample=SAMPLE_CORES),
        expand("output/bam/{sample}.bam", sample=SAMPLE_CORES),
-       # "output/report/multiqc_report.html",
+       expand("output/coverage/{sample}_coverage.txt", sample=SAMPLE_CORES),
        "output/Nreads.csv",
 
 
@@ -238,7 +239,8 @@ rule qc:
         bbduk.sh -Xmx16g in={input.r1} in2={input.r2} \
           ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa \
           out={output.r1} out2={output.r2} \
-          qtrim=rl trimq=20 maq=20 minlen=100
+          qtrim=rl trimq=20 maq=20 minlen=100 \
+          entropy=0.5 entropywindow=50
         """
 
 rule dedup:
@@ -322,7 +324,49 @@ rule barlett:
        """
        bowtie2 --local --sensitive --threads 30  \
        -x {params.ref} \
-       -1 {input.r1} -2 {input.r2} | 
+       -1 {input.r1} -2 {input.r2} |
        samtools view -bS | samtools sort -o {output.bam}
        """
- 
+
+rule kraken_eupathdb:
+    input:
+        r1 = rules.merge_lanes.output.r1,
+        r2 = rules.merge_lanes.output.r2
+    output:
+        out    = "output/kraken2_eupathdb/{sample}.krk",
+        report = "output/kraken2_eupathdb/{sample}.report"
+    params:
+        ref = config["eupathdb"]
+    threads: config["threads"]
+    log:
+        "output/kraken2_eupathdb/{sample}.log"
+    shell:
+        """
+        kraken2 --db {params.ref} --threads {threads} \
+          --output {output.out} --report {output.report} \
+          --report-minimizer-data \
+          --paired --gzip-compressed {input.r1} {input.r2} \
+          2> {log}
+        """
+
+rule coverage:
+    input:
+        bam = "output/bam/{sample}.bam"
+    output:
+        txt = "output/coverage/{sample}_coverage.txt"
+    shell:
+        """
+        samtools coverage {input.bam} -o {output.txt}
+        """
+
+rule make_pavian_eupathdb:
+    input:
+        report = rules.kraken_eupathdb.output.report
+    output:
+        pavian = "output/kraken2_eupathdb/{sample}.pavian"
+    shell:
+        """
+        awk 'BEGIN {{ FS = "\\t" }}; OFS = "\\t" {{print $1, $2, $3, $6, $7, $8}}' \
+          {input.report} > {output.pavian}
+        """
+

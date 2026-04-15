@@ -1,0 +1,24 @@
+name: cub
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python
+  - pandas
+  - plotly
+  - numpy
+  - snakemake
+  - bbmap
+  - fastp
+  - kraken2
+  - fastqc
+  - multiqc
+  - seqkit
+  - hostile
+  - polars
+  - scipy
+  - statsmodels
+  - bowtie2
+  - samtools
+  - pigz
