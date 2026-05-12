@@ -1,20 +1,35 @@
 #!/usr/bin/env python3
 """
-bam.py
+bam.py — Per-reference read-count analysis across Bowtie2 BAM files.
 
-Compare per-reference read counts across BAM files.
+Pipeline steps
+--------------
+ 1. Count reads per reference  — iterate each BAM; paired-end: count read1
+    of proper pairs; single-end: count all mapped reads; apply --min-mapq.
+ 2. Build flat DataFrame  — sample × reference × read_count.
+ 3. Load taxonomy  — reads bartlett_kraken2_index.tsv (or similar); normalises
+    column names; keeps gtdb_taxonomy, ncbi_taxid (species-level),
+    match_method, bartlett_species.
+ 4. Join taxonomy  — attach taxonomy annotation to each reference accession.
+ 5. Split positive control  — TPOS rows removed before statistics so they
+    do not inflate cohort means/SDs (--pos-name).
+ 6. Initialize neg_read_count  — set to 0 for all remaining rows.
+ 7. Statistics  —
+      negative-control mode (--neg-name): z = (reads - neg_reads - pseudocount)
+        / sqrt(neg_reads + pseudocount)
+      cohort mode: z = (reads - mean) / sd  [n >= 3 samples only; else null].
+ 8. Coverage join (optional)  — if --coverage-dir is given, joins samtools
+    coverage output to add coverage_breadth and mean_depth columns; applied
+    to TPOS rows as well.
+ 9. Re-append positive control  — TPOS rows concatenated back with
+    stat_mode = 'positive_control' and z_score / p_value set to null.
+10. Sort + write TSV.
 
-Statistics logic (harmonized with cub.py):
-- If --neg-name is provided:
-    * use negative-control–based statistics (per reference)
-- Else:
-    * use cohort-based statistics only if a reference is seen in >= 3 samples
-    * otherwise z_score and p_value are set to null (NA)
-
-Other features:
-- Counts paired reads per reference with a MAPQ threshold.
-- Can ignore specified samples.
-- Annotates references with GTDB taxonomy table.
+Statistics logic
+----------------
+  --neg-name given : z = (reads - neg_reads + pseudocount) /
+                         sqrt(neg_reads + pseudocount)
+  cohort mode      : z = (reads - mean) / sd  [n >= 3 samples only]
 """
 
 import argparse
@@ -31,13 +46,38 @@ from scipy.stats import norm
 # ---------------------------------------------------------------------
 
 
+_DESCRIPTION = """\
+bam.py — Per-reference read-count analysis across Bowtie2 BAM files.
+
+Pipeline steps
+--------------
+ 1. Count reads per reference  Paired-end: read1 of proper pairs; single-end:
+                               all mapped reads; filtered by --min-mapq.
+ 2. Build flat DataFrame       sample x reference x read_count.
+ 3. Load taxonomy              bartlett_kraken2_index.tsv (or similar).
+                               Normalises accession/ncbi_taxid column names.
+ 4. Join taxonomy              Attach gtdb_taxonomy, ncbi_taxid, match_method,
+                               bartlett_species to each reference accession.
+ 5. Split positive control     TPOS excluded from stats (--pos-name).
+ 6. Initialize neg_read_count  Set to 0 for all clinical rows.
+ 7. Statistics                 negative-control or cohort z-score + p-value.
+ 8. Coverage join (optional)   --coverage-dir: adds coverage_breadth and
+                               mean_depth from samtools coverage output.
+ 9. Re-append TPOS             stat_mode='positive_control', z/p null.
+10. Sort + write TSV.
+
+Statistics logic
+----------------
+  --neg-name given : z = (reads - neg_reads + pseudocount) /
+                         sqrt(neg_reads + pseudocount)
+  cohort mode      : z = (reads - mean) / sd  [n >= 3 samples only]
+"""
+
+
 def parse_args():
     p = argparse.ArgumentParser(
-        description=(
-            "Compare BAM files per reference, compute stats versus a negative "
-            "control if provided, or across samples otherwise, and annotate "
-            "references with GTDB taxonomy."
-        )
+        description=_DESCRIPTION,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
         "--bam-dir",
@@ -58,6 +98,14 @@ def parse_args():
         "--neg-name",
         default=None,
         help=("Negative control BAM filename (e.g. 'MG-Run35-Ech-11.bam'). If provided, stats are computed versus this sample."),
+    )
+    p.add_argument(
+        "--pos-name",
+        default=None,
+        help=(
+            "Positive control BAM filename (e.g. 'TPOS.bam'). Excluded from cohort "
+            "statistics but kept in output with stat_mode='positive_control'."
+        ),
     )
     p.add_argument(
         "--ignore-samples",
@@ -98,9 +146,11 @@ def load_taxonomy(taxonomy_path: Path) -> pl.DataFrame:
     Load taxonomy table from .rds, .tsv, .txt or .csv into a Polars DataFrame.
 
     Expected columns:
-      - accessions
+      - accessions (or accession — normalized automatically)
       - gtdb_taxonomy
-      - optionally: ncbi_taxid, gtdb_genome_representative, gtdb_representative
+      - optionally: ncbi_taxid or ncbi_taxid_species (species-level preferred for
+        Kraken2 matching; ncbi_taxid_species is normalized to ncbi_taxid automatically)
+      - optionally: gtdb_genome_representative, gtdb_representative
     """
     suffix = taxonomy_path.suffix.lower()
 
@@ -125,8 +175,16 @@ def load_taxonomy(taxonomy_path: Path) -> pl.DataFrame:
     else:
         raise SystemExit(f"ERROR: Unsupported taxonomy file extension: {suffix}\nUse .rds, .tsv, .txt or .csv")
 
+    # Normalize accession column: accept singular form
+    if "accessions" not in tax_df.columns and "accession" in tax_df.columns:
+        tax_df = tax_df.rename({"accession": "accessions"})
+
     if "accessions" not in tax_df.columns:
-        raise SystemExit("ERROR: taxonomy table must contain a column named 'accessions'.")
+        raise SystemExit("ERROR: taxonomy table must contain a column named 'accessions' or 'accession'.")
+
+    # Prefer species-level taxid (bartlett_kraken2_index.tsv) over strain-level
+    if "ncbi_taxid_species" in tax_df.columns and "ncbi_taxid" not in tax_df.columns:
+        tax_df = tax_df.rename({"ncbi_taxid_species": "ncbi_taxid"})
 
     keep_cols = [
         c
@@ -134,6 +192,8 @@ def load_taxonomy(taxonomy_path: Path) -> pl.DataFrame:
             "accessions",
             "gtdb_taxonomy",
             "ncbi_taxid",
+            "match_method",
+            "bartlett_species",
             "gtdb_genome_representative",
             "gtdb_representative",
         ]
@@ -318,6 +378,19 @@ def main():
     ).drop("accessions", strict=False)
 
     # ------------------------------------------------------------------
+    # Split positive control (excluded from cohort stats, kept in output)
+    # ------------------------------------------------------------------
+    pos_sample_stem: str | None = Path(args.pos_name).stem if args.pos_name else None
+    pos_df: pl.DataFrame | None = None
+    if pos_sample_stem:
+        pos_df = df.filter(pl.col("sample") == pos_sample_stem)
+        df = df.filter(pl.col("sample") != pos_sample_stem)
+        if pos_df.is_empty():
+            print(f"[WARN] Positive control '{pos_sample_stem}' not found in BAM data.", file=sys.stderr)
+        else:
+            print(f"[INFO] Positive control '{pos_sample_stem}' split out ({pos_df.height} rows).", file=sys.stderr)
+
+    # ------------------------------------------------------------------
     # Statistics
     # ------------------------------------------------------------------
 
@@ -407,8 +480,27 @@ def main():
                     right_on=["sample", "rname"],
                     how="left",
                 )
+                if pos_df is not None and not pos_df.is_empty():
+                    pos_df = pos_df.join(
+                        cov_df,
+                        left_on=["sample", "reference"],
+                        right_on=["sample", "rname"],
+                        how="left",
+                    )
             else:
                 print("[WARN] No coverage data loaded; skipping join.", file=sys.stderr)
+
+    # ------------------------------------------------------------------
+    # Re-append positive control with null stats
+    # ------------------------------------------------------------------
+    if pos_df is not None and not pos_df.is_empty():
+        pos_df = pos_df.with_columns(
+            pl.lit(None).cast(pl.Float64).alias("z_score"),
+            pl.lit(None).cast(pl.Float64).alias("p_value"),
+            pl.lit("positive_control").alias("stat_mode"),
+            pl.lit(0.0).alias("neg_read_count"),
+        )
+        df = pl.concat([df, pos_df], how="diagonal")
 
     # ------------------------------------------------------------------
     # Final formatting & output
@@ -429,6 +521,8 @@ def main():
         "mean_depth",
         "gtdb_taxonomy",
         "ncbi_taxid",
+        "match_method",
+        "bartlett_species",
     ]
     out_cols = [c for c in out_cols if c in df.columns]
 

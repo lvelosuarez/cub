@@ -2,6 +2,7 @@
 .snakemake/
 output/
 results/
+test
 
 # Pipeline run markers (written into sequencing run folders)
 .cub.lock

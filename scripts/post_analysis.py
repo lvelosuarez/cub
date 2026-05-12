@@ -245,7 +245,6 @@ def _(BAM, pl):
     bam_sel = (
         bam.select("sample", "ncbi_taxid", "gtdb_taxonomy", "read_count", "z_score", "p_value")
         .with_columns(pl.col("ncbi_taxid").cast(pl.Int64, strict=False).alias("taxid"))
-        .with_columns(pl.when(pl.col("taxid") == 765068).then(1747).otherwise(pl.col("taxid")).alias("taxid"))
         .rename(
             {
                 "z_score": "bam_z",

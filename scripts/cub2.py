@@ -1,22 +1,43 @@
 #!/usr/bin/env python3
 """
-cub2.py
+cub2.py — Statistical analysis of Kraken2 reports using minimizer data.
 
-Statistical analysis of Kraken2 reports using minimizer data.
-
-Features
---------
-- Reads Kraken2 standard reports produced with --report-minimizer-data.
-- Reads Kraken2 DB inspect.txt (kraken2-inspect output).
-- Host organism exclusion via NCBI taxonomy tree (names.dmp + nodes.dmp
-  from the DB taxonomy/ directory) with fallback to simple name/taxID match.
-- Species-level filtering: non-viruses kept at rank S; viruses at S/S1/S2
-  where direct reads dominate (fragments_direct / fragments_clade >= threshold).
-- Minimizer proportion per sample computed on non-host taxa only.
-- genome_coverage_estimate = distinct_minimizers / db_taxon_minimizers.
-- Statistics: cohort mode (n >= 3 samples) or negative-control mode.
-- Benjamini–Hochberg FDR correction.
-- Statistics logic harmonized with bam.py.
+Pipeline steps
+--------------
+ 1. Load inspect.txt  — DB reference file from kraken2-inspect; contains
+    per-taxon minimizer counts for the whole database (used for genome
+    coverage estimates). Must match the Kraken2 DB used for classification.
+    Generate with: kraken2-inspect --db /path/to/db > inspect.txt
+    On tachyon: /mnt/san/microbio/database/kraken2/<db_name>/
+ 2. Load Kraken2 .report files  — one per sample; each has fragment counts
+    and minimizer counts per taxon (requires --report-minimizer-data).
+ 3. Remove unwanted samples  — anything listed in --samples-to-remove.
+ 4. Join DB info  — attach database-level minimizer counts to each taxon.
+ 5. Species-level filter  — keep rank S for bacteria/fungi; for viruses also
+    keep S1/S2 if fragments_direct / fragments_clade >= --virus-direct-ratio
+    (avoids double-counting reads at genus when they map to a specific strain).
+ 6. Mark host taxa  — flag rows belonging to the host organism (e.g. Homo
+    sapiens) using the full NCBI taxonomy tree from the DB taxonomy/ directory.
+ 7. Minimizer proportions  — for non-host taxa compute
+    distinct_minimizers / total_non_host_minimizers per sample (normalised
+    abundance measure).
+ 8. Genome coverage estimate  — distinct_minimizers / db_taxon_minimizers
+    (fraction of the reference genome k-mers observed).
+ 9. Min-prop filter  — drop rows below --min-prop threshold.
+10. Split positive control  — TPOS rows are removed from the working
+    dataframe before statistics are computed so they do not inflate cohort
+    means/SDs.
+11. Taxon descriptive stats  — per-taxon mean proportion, SD, and
+    n_samples_with_taxon computed on clinical samples only (TPOS excluded).
+12. Statistics  —
+      negative-control mode (--negative-control): z = (prop - neg_prop) /
+        sqrt(neg_prop + pseudocount)
+      cohort mode: z = (prop - mean) / sd, only when n >= 3 samples have
+        the taxon; otherwise null.
+13. Benjamini–Hochberg FDR  — multiple-testing correction on all p-values.
+14. Re-append positive control  — TPOS rows are concatenated back with
+    stat_mode = 'positive_control' and all stat columns set to null.
+15. Write TSV.
 
 Statistics logic
 ----------------
@@ -40,9 +61,44 @@ from scipy.stats import norm
 # ---------------------------------------------------------------------
 
 
+_DESCRIPTION = """\
+cub2.py — Statistical analysis of Kraken2 reports using minimizer data.
+
+Pipeline steps
+--------------
+ 1. Load inspect.txt        DB per-taxon minimizer counts (kraken2-inspect).
+                            Must match the DB used for classification.
+                            Generate: kraken2-inspect --db /path/to/db > inspect.txt
+                            On tachyon: /mnt/san/microbio/database/kraken2/<db>/
+ 2. Load .report files      One Kraken2 report per sample (--report-minimizer-data).
+ 3. Remove unwanted samples --samples-to-remove list.
+ 4. Join DB info            Attach DB minimizer counts to each taxon row.
+ 5. Species-level filter    Rank S for bacteria/fungi; S/S1/S2 for viruses
+                            (fragments_direct / fragments_clade >= threshold).
+ 6. Mark host taxa          Uses NCBI taxonomy tree (names.dmp + nodes.dmp)
+                            with fallback to name match.
+ 7. Minimizer proportions   distinct_minimizers / total_non_host_minimizers.
+ 8. Genome coverage est.    distinct_minimizers / db_taxon_minimizers.
+ 9. Min-prop filter         Drop rows below --min-prop.
+10. Split positive control  TPOS excluded from stats so it does not inflate
+                            cohort means/SDs (--positive-control).
+11. Taxon descriptive stats mean, SD, n_samples_with_taxon (clinical only).
+12. Statistics              negative-control or cohort z-score + p-value.
+13. BH FDR correction       Benjamini-Hochberg on all p-values.
+14. Re-append TPOS          stat_mode='positive_control', all stats null.
+15. Write TSV.
+
+Statistics logic
+----------------
+  --negative-control given : z = (prop - neg_prop) / sqrt(neg_prop + pseudocount)
+  cohort mode              : z = (prop - mean) / sd  [n >= 3 samples only]
+"""
+
+
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Statistical analysis of Kraken2 reports using minimizer data."
+        description=_DESCRIPTION,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
         "--std-reports",
@@ -60,7 +116,13 @@ def parse_args():
     p.add_argument(
         "--reference",
         required=True,
-        help="Kraken2 DB inspect.txt (output of kraken2-inspect).",
+        help=(
+            "Path to inspect.txt for the Kraken2 DB used in this run. "
+            "Generated with: kraken2-inspect --db /path/to/db > inspect.txt. "
+            "On tachyon: /mnt/san/microbio/database/kraken2/<db_name>/. "
+            "Must match the DB used for classification — used for genome coverage "
+            "estimates (db_taxon_minimizers) and NCBI taxonomy tree (taxonomy/)."
+        ),
     )
     p.add_argument(
         "--domain",
@@ -112,6 +174,14 @@ def parse_args():
         ),
     )
     p.add_argument(
+        "--positive-control",
+        default=None,
+        help=(
+            "Sample name of positive control. Excluded from cohort statistics "
+            "but kept in output with stat_mode='positive_control'."
+        ),
+    )
+    p.add_argument(
         "--pseudocount",
         type=float,
         default=1e-6,
@@ -142,7 +212,7 @@ def read_inspect(path: Path) -> pl.DataFrame:
     Format (tab-separated, no header):
         db_pct  db_clade_minimizers  db_taxon_minimizers  db_rank_code  taxid  db_name
     """
-    df = pl.read_csv(path, separator="\t", has_header=False)
+    df = pl.read_csv(path, separator="\t", has_header=False, comment_prefix="#")
 
     if df.width < 6:
         raise SystemExit(
@@ -518,6 +588,19 @@ def main():
     non_host = non_host.filter(pl.col("minimizer_proportion_sample") >= args.min_prop)
 
     # ------------------------------------------------------------------
+    # Split positive control (excluded from cohort stats, kept in output)
+    # ------------------------------------------------------------------
+    pos_sample = args.positive_control
+    pos_df: pl.DataFrame | None = None
+    if pos_sample:
+        pos_df = non_host.filter(pl.col("sample") == pos_sample)
+        non_host = non_host.filter(pl.col("sample") != pos_sample)
+        if pos_df.is_empty():
+            print(f"[WARN] Positive control '{pos_sample}' not found in data.", file=sys.stderr)
+        else:
+            print(f"[INFO] Positive control '{pos_sample}' split out ({pos_df.height} rows).", file=sys.stderr)
+
+    # ------------------------------------------------------------------
     # Taxon descriptive stats (always computed)
     # ------------------------------------------------------------------
     stats = non_host.group_by("taxid").agg(
@@ -608,6 +691,15 @@ def main():
     non_host = non_host.with_columns(
         benjamini_hochberg(non_host["p_value"]).alias("fdr")
     )
+
+    # ------------------------------------------------------------------
+    # Re-append positive control with null stats
+    # ------------------------------------------------------------------
+    if pos_df is not None and not pos_df.is_empty():
+        pos_df = pos_df.with_columns(
+            pl.lit("positive_control").alias("stat_mode"),
+        )
+        non_host = pl.concat([non_host, pos_df], how="diagonal")
 
     # ------------------------------------------------------------------
     # Output
