@@ -53,14 +53,18 @@ Pipeline steps
 --------------
  1. Count reads per reference  Paired-end: read1 of proper pairs; single-end:
                                all mapped reads; filtered by --min-mapq.
- 2. Build flat DataFrame       sample x reference x read_count.
- 3. Load taxonomy              bartlett_kraken2_index.tsv (or similar).
+                               Also counts total read1/single-end reads in BAM
+                               (any MAPQ, mapped or not) as library denominator.
+ 2. Build flat DataFrame       sample x reference x read_count x total_reads.
+ 3. Compute read_proportion    read_count / total_reads  (analogous to
+                               minimizer_proportion_sample in cub2.py).
+ 4. Load taxonomy              bartlett_kraken2_index.tsv (or similar).
                                Normalises accession/ncbi_taxid column names.
- 4. Join taxonomy              Attach gtdb_taxonomy, ncbi_taxid, match_method,
+ 5. Join taxonomy              Attach gtdb_taxonomy, ncbi_taxid, match_method,
                                bartlett_species to each reference accession.
- 5. Split positive control     TPOS excluded from stats (--pos-name).
- 6. Initialize neg_read_count  Set to 0 for all clinical rows.
- 7. Statistics                 negative-control or cohort z-score + p-value.
+ 6. Split positive control     TPOS excluded from stats (--pos-name).
+ 7. Statistics                 negative-control or cohort z-score + p-value,
+                               computed on read_proportion_sample.
  8. Coverage join (optional)   --coverage-dir: adds coverage_breadth and
                                mean_depth from samtools coverage output.
  9. Re-append TPOS             stat_mode='positive_control', z/p null.
@@ -68,9 +72,9 @@ Pipeline steps
 
 Statistics logic
 ----------------
-  --neg-name given : z = (reads - neg_reads + pseudocount) /
-                         sqrt(neg_reads + pseudocount)
-  cohort mode      : z = (reads - mean) / sd  [n >= 3 samples only]
+  --neg-name given : z = (prop - (neg_prop + pseudocount)) /
+                         sqrt(neg_prop + pseudocount)
+  cohort mode      : z = (prop - mean_prop) / sd_prop  [n >= 3 samples only]
 """
 
 
@@ -121,8 +125,12 @@ def parse_args():
     p.add_argument(
         "--pseudocount",
         type=float,
-        default=1.0,
-        help="Pseudocount added to negative counts (default: 1.0).",
+        default=1e-6,
+        help=(
+            "Pseudocount added to negative-control proportion before z-score "
+            "computation (default: 1e-6). Must be on the same scale as "
+            "read_proportion_sample (~1e-6 to 1e-3 for typical libraries)."
+        ),
     )
     p.add_argument(
         "--coverage-dir",
@@ -203,16 +211,31 @@ def load_taxonomy(taxonomy_path: Path) -> pl.DataFrame:
     return tax_df.select(keep_cols).unique(subset=["accessions"])
 
 
-def count_paired_reads_per_reference(bam_path: Path, min_mapq: int) -> dict[str, int]:
+def count_paired_reads_per_reference(
+    bam_path: Path, min_mapq: int
+) -> tuple[dict[str, int], int]:
     """
-    Count reads per reference.
+    Count reads per reference and total library size.
 
-    - Paired-end BAMs: count read1 of proper pairs passing MAPQ threshold.
-    - Single-end BAMs: count all mapped reads passing MAPQ threshold.
+    Returns (counts, total) where:
+    - counts: MAPQ-passing reads per reference (numerator for read_proportion_sample)
+    - total:  ALL read1/single-end reads regardless of MAPQ or mapping status
+              (denominator — stable measure of the library available to the aligner)
+
+    Paired-end: read1 only in both numerator and denominator.
+    Single-end: all reads in both.
     """
     counts: dict[str, int] = {}
+    total = 0
     with pysam.AlignmentFile(bam_path, "rb") as bam:
         for read in bam.fetch(until_eof=True):
+            # Denominator: read1 (paired) or any read (single-end), any MAPQ
+            if read.is_paired:
+                if read.is_read1:
+                    total += 1
+            else:
+                total += 1
+            # Numerator: same read1/single filter + must be mapped + MAPQ threshold
             if read.is_unmapped:
                 continue
             if read.is_paired:
@@ -222,7 +245,7 @@ def count_paired_reads_per_reference(bam_path: Path, min_mapq: int) -> dict[str,
                 continue
             ref_name = bam.get_reference_name(read.reference_id)
             counts[ref_name] = counts.get(ref_name, 0) + 1
-    return counts
+    return counts, total
 
 
 def load_coverage(coverage_dir: Path) -> pl.DataFrame:
@@ -320,13 +343,14 @@ def main():
             continue
 
         print(f"[INFO] Counting paired reads for sample: {sample_id}", file=sys.stderr)
-        ref_counts = count_paired_reads_per_reference(bam_path, args.min_mapq)
+        ref_counts, total = count_paired_reads_per_reference(bam_path, args.min_mapq)
         for ref, n in ref_counts.items():
             rows.append(
                 {
                     "sample": sample_id,
                     "reference": ref,
                     "read_count": n,
+                    "total_reads": total,
                 }
             )
 
@@ -352,7 +376,11 @@ def main():
         return
 
     df = pl.DataFrame(rows)
-    df = df.with_columns(pl.lit(args.min_mapq).alias("mapq_min"))
+    df = df.with_columns(
+        pl.lit(args.min_mapq).alias("mapq_min"),
+        (pl.col("read_count").cast(pl.Float64) / pl.col("total_reads").cast(pl.Float64))
+        .alias("read_proportion_sample"),
+    )
 
     # ------------------------------------------------------------------
     # Load taxonomy and annotate references
@@ -410,13 +438,21 @@ def main():
 
         neg_df = df.filter(pl.col("sample") == neg_sample_stem)
 
-        neg_bg = neg_df.group_by("reference").agg(pl.col("read_count").sum().alias("neg_read_count"))
+        neg_bg = neg_df.group_by("reference").agg(
+            pl.col("read_count").sum().alias("neg_read_count"),
+            pl.col("read_proportion_sample").sum().alias("neg_prop"),
+        )
 
         df = df.join(neg_bg, on="reference", how="left")
-        df = df.with_columns(pl.col("neg_read_count").fill_null(0.0).alias("neg_read_count"))
+        df = df.with_columns(
+            pl.col("neg_read_count").fill_null(0.0),
+            pl.col("neg_prop").fill_null(0.0),
+        )
 
-        df = df.with_columns((pl.col("neg_read_count") + args.pseudocount).alias("mu"))
-        df = df.with_columns(((pl.col("read_count") - pl.col("mu")) / pl.col("mu").sqrt()).alias("z_score"))
+        df = df.with_columns((pl.col("neg_prop") + args.pseudocount).alias("mu"))
+        df = df.with_columns(
+            ((pl.col("read_proportion_sample") - pl.col("mu")) / pl.col("mu").sqrt()).alias("z_score")
+        )
 
         df = df.with_columns(
             pl.col("z_score")
@@ -433,20 +469,21 @@ def main():
         # Cohort-based stats (n >= 3)
         # -----------------------------
         bg = df.group_by("reference").agg(
-            pl.col("read_count").mean().alias("mean_count"),
-            pl.col("read_count").std().alias("sd_count"),
-            (pl.col("read_count") > 0).sum().alias("n_samples_with_ref"),
+            pl.col("read_proportion_sample").mean().alias("mean_prop"),
+            pl.col("read_proportion_sample").std().alias("sd_prop"),
+            (pl.col("read_proportion_sample") > 0).sum().alias("n_samples_with_ref"),
         )
 
         df = df.join(bg, on="reference", how="left")
 
         df = df.with_columns(
-            ((pl.col("n_samples_with_ref") >= 3) & (pl.col("sd_count").is_not_null()) & (pl.col("sd_count") > 0)).alias("has_valid_stats")
+            ((pl.col("n_samples_with_ref") >= 3) & pl.col("sd_prop").is_not_null() & (pl.col("sd_prop") > 0))
+            .alias("has_valid_stats")
         )
 
         df = df.with_columns(
             pl.when(pl.col("has_valid_stats"))
-            .then((pl.col("read_count") - pl.col("mean_count")) / pl.col("sd_count"))
+            .then((pl.col("read_proportion_sample") - pl.col("mean_prop")) / pl.col("sd_prop"))
             .otherwise(None)
             .alias("z_score")
         )
@@ -460,7 +497,9 @@ def main():
             .alias("p_value")
         )
 
-        df = df.with_columns(pl.when(pl.col("has_valid_stats")).then(pl.lit("cohort")).otherwise(pl.lit("none")).alias("stat_mode"))
+        df = df.with_columns(
+            pl.when(pl.col("has_valid_stats")).then(pl.lit("cohort")).otherwise(pl.lit("none")).alias("stat_mode")
+        )
 
     # ------------------------------------------------------------------
     # Join coverage (optional)
@@ -506,13 +545,15 @@ def main():
     # Final formatting & output
     # ------------------------------------------------------------------
 
-    df = df.sort(["sample", "read_count"], descending=[False, True])
+    df = df.sort(["sample", "read_proportion_sample"], descending=[False, True])
 
     out_cols = [
         "sample",
         "reference",
         "mapq_min",
         "read_count",
+        "total_reads",
+        "read_proportion_sample",
         "neg_read_count",
         "z_score",
         "p_value",
