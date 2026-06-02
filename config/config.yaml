@@ -1,9 +1,11 @@
 
 ---
 
-PlusPF:   "/mnt/san/microbio/fermion/tl/kraken2/PlusPF20251015/"
-barlett:  "/mnt/san/microbio/fermion/tl/gtdb/bartlett_index/bartlett"
-eupathdb: "/mnt/san/microbio/fermion/tl/kraken2/eupathdb48_20230407/"
+PlusPF:   "/mnt/san/microbio/database/kraken2/PlusPF20260226"
+inspectPF: "/mnt/san/microbio/database/kraken2/PlusPF20260226/inspect.txt"
+barlett:  "/mnt/san/microbio/database/gtdb/bartlett_index"
+eupathdb: "/mnt/san/microbio/database/kraken2/eupathdb48_20230407"
+inspect_eupathdb: "/mnt/san/microbio/database/kraken2/eupathdb48_20230407/inspect.txt"
 threads:  15
 
 lib3:
