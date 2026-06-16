@@ -7,6 +7,9 @@ Aim: Snakemake workflow to process paired-end shot gun from Illumina reads (Next
 Run: snakemake -j3 
 Run for dag : snakemake --dag | dot -Tsvg > dag.svg
 Latest modification:
+- add sexual chromosome spurious matches in bbduk qc -> 2026-06-09
+- add helminth db homemade with kraken2 -> 2026-06-05
+- add quality to kraken --confidence 0.15  -> 2026-05-26
 - dedupe -> 29-10-2025
 - dehosting
 - counting reads per lane -> 19-07-2024
@@ -52,7 +55,7 @@ def get_sample_df() -> pd.DataFrame:
     """
     path = os.getcwd()
     samples = defaultdict(dict)
-    excluded_dirs = {"output", "results"}
+    excluded_dirs = {"output", "results1", "results"}
 
     for dirpath, dirnames, files in os.walk(os.path.abspath(path)):
         # Do not go into output/results folders
@@ -175,73 +178,50 @@ def get_dehost_fastq_for_sample(sample: str) -> dict:
     return {"r1": r1, "r2": r2}
 
 
-# def get_sample_df() -> pd.DataFrame:
-#     """
-#     Extract samples from NGS illumina folder
-#     """
-#     path = os.getcwd()
-#     samples = defaultdict(dict)
-#     excluded_dirs = {"output", "results"}
-#     for dirpath, dirnames, files in os.walk(os.path.abspath(path)):
-#         dirnames[:] = [d for d in dirnames if d not in excluded_dirs]
-#         for fname in files:
-#             if ".fastq" in fname or ".fq" in fname:
-#                 sample_id = fname.split(".fastq")[0].split(".fq")[0]
-#                 sample_id = sample_id.replace("_R1", "").replace("_R2", "").replace("_001", "").replace(" ", "-")
-#                 fq_path = os.path.join(dirpath, fname)
-#                 if "_R1" in fname:
-#                     samples[sample_id]['R1'] = fq_path
-#                 else:
-#                     samples[sample_id]['R2'] = fq_path
-#     samples= pd.DataFrame(samples).T
-#     samples = samples.reset_index()
-#     samples["sample"] = samples["index"].str.extract(r"^(.+)_S\d+_L\d+$")
-#     samples["lane"] = samples["index"].str.extract(r"^.+_(S\d+_L\d+)$")
-#     samples["names"] = samples["index"]
-#     samples = samples[~ samples.names.str.startswith('Undet')]
-# #     return samples
-
-# SAMPLES = get_sample_df()
-
-
-# def get_raw_fastq(names:str) -> dict:
-#     ''' return a dict with the path to the raw fastq files'''
-#     r1 =SAMPLES.query(f"names == '{names}'")["R1"].to_list()
-#     r2 =SAMPLES.query(f"names == '{names}'")["R2"].to_list()
-    
-#     return {'r1': r1, 'r2': r2}
-
 rule all:
     input:
        expand("output/qc/{names}_R1.fastq.gz", names=SAMPLES["names"].to_list()),
        expand("output/dehost/{names}_dedup_R1.clean_1.fastq.gz", names=SAMPLES["names"].to_list()),
        expand("output/dehost/{names}_dedup_R2.clean_2.fastq.gz", names=SAMPLES["names"].to_list()),
        expand("output/merge/{sample}_R1.fastq.gz", sample=SAMPLE_CORES),
-       expand("output/kraken2/{sample}.pavian", sample=SAMPLE_CORES),
-       expand("output/kraken2_eupathdb/{sample}.pavian", sample=SAMPLE_CORES),
+       expand("output/kraken2/{sample}.krk", sample=SAMPLE_CORES),
+       expand("output/kraken2_eupathdb/{sample}.krk", sample=SAMPLE_CORES),
        expand("output/bam/{sample}.bam", sample=SAMPLE_CORES),
-       expand("output/coverage/{sample}_coverage.txt", sample=SAMPLE_CORES),
+       #expand("output/coverage/{sample}_coverage.txt", sample=SAMPLE_CORES),
        "output/Nreads.csv",
 
 
-include: "rules/count.smk"
+include: "rules/count_claude.smk"
+
 
 rule qc:
-    input:
-        unpack(lambda wildcards: get_raw_fastq(wildcards.names))
-    output:
-        r1 = "output/qc/{names}_R1.fastq.gz",
-        r2 = "output/qc/{names}_R2.fastq.gz"
-    log:
-        "output/qc/{names}_bbduk.log"
-    shell:
-        """
-        bbduk.sh -Xmx16g in={input.r1} in2={input.r2} \
-          ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa \
-          out={output.r1} out2={output.r2} \
-          qtrim=rl trimq=20 maq=20 minlen=100 \
-          entropy=0.5 entropywindow=50
-        """
+     input:
+         unpack(lambda wildcards: get_raw_fastq(wildcards.names))
+     output:
+         r1 = "output/qc/{names}_R1.fastq.gz",
+         r2 = "output/qc/{names}_R2.fastq.gz"
+     log:
+         "output/qc/{names}_bbduk.log"
+     params:
+         sex_kmers = "/mnt/san/microbio/apps/cub/resources/sex_chromosome_kmers.fasta"
+     shell:
+         """
+         bbduk.sh -Xmx16g \
+           in={input.r1} in2={input.r2} \
+           ref=adapters,artifacts,phix,lambda,pjet,mtst,kapa \
+           out={output.r1}.tmp.fastq.gz out2={output.r2}.tmp.fastq.gz \
+           qtrim=rl trimq=20 maq=20 minlen=50 \
+           entropy=0.5 entropywindow=50 \
+           2> {log}
+         bbduk.sh -Xmx4g \
+           in={output.r1}.tmp.fastq.gz  in2={output.r2}.tmp.fastq.gz\
+           ref={params.sex_kmers} \
+           out={output.r1}  out2={output.r2}\
+           k=31 hdist=0\
+           2>> {log}
+         rm {output.r1}.tmp.fastq.gz
+         rm {output.r2}.tmp.fastq.gz
+         """
 
 rule dedup:
     input:
@@ -298,35 +278,17 @@ rule kraken:
     threads: 20
     shell:
         """
-        kraken2 --db {params.ref} --threads {threads}\
-        --output {output.out} --report {output.report}  --report-minimizer-data \
-        --paired --gzip-compressed {input.r1} {input.r2}
+        kraken2 \
+        --db {params.ref}  \
+        --confidence 0.15 \
+        --minimum-hit-groups 3 \
+        --threads {threads} \
+        --output {output.out} \
+        --report {output.report}  \
+        --report-minimizer-data \
+        --paired \
+        --gzip-compressed {input.r1} {input.r2}
         """
-rule make_pavian_file:
-    input:
-        report = rules.kraken.output.report
-    output:
-        pavian = "output/kraken2/{sample}.pavian"
-    shell:
-        """
-        cat {input.report} | awk 'BEGIN {{ FS = "\\t" }}; OFS = "\\t" {{print $1, $2, $3, $6, $7, $8}}' >  {output.pavian}
-        """
-
-rule barlett:
-    input:
-       r1 = rules.merge_lanes.output.r1,
-       r2 = rules.merge_lanes.output.r2
-    output:
-        bam = "output/bam/{sample}.bam",
-    params:
-        ref = config["barlett"]
-    shell:
-       """
-       bowtie2 --local --sensitive --threads 30  \
-       -x {params.ref} \
-       -1 {input.r1} -2 {input.r2} |
-       samtools view -bS | samtools sort -o {output.bam}
-       """
 
 rule kraken_eupathdb:
     input:
@@ -342,31 +304,58 @@ rule kraken_eupathdb:
         "output/kraken2_eupathdb/{sample}.log"
     shell:
         """
-        kraken2 --db {params.ref} --threads {threads} \
-          --output {output.out} --report {output.report} \
-          --report-minimizer-data \
-          --paired --gzip-compressed {input.r1} {input.r2} \
-          2> {log}
+        kraken2 \
+        --db {params.ref}  \
+        --confidence 0.15 \
+        --minimum-hit-groups 3 \
+        --threads {threads} \
+        --output {output.out} \
+        --report {output.report}  \
+        --report-minimizer-data \
+        --paired \
+        --gzip-compressed {input.r1} {input.r2}
         """
 
-rule coverage:
-    input:
-        bam = "output/bam/{sample}.bam"
-    output:
-        txt = "output/coverage/{sample}_coverage.txt"
-    shell:
-        """
-        samtools coverage {input.bam} -o {output.txt}
-        """
 
-rule make_pavian_eupathdb:
+rule kraken_helmith:
     input:
-        report = rules.kraken_eupathdb.output.report
+        r1 = rules.merge_lanes.output.r1,
+        r2 = rules.merge_lanes.output.r2
     output:
-        pavian = "output/kraken2_eupathdb/{sample}.pavian"
+        out    = "output/kraken2_helminth/{sample}.krk",
+        report = "output/kraken2_helminth/{sample}.report"
+    params:
+        ref = config["helminth"]
+    threads: config["threads"]
+    log:
+        "output/kraken2_helminth/{sample}.log"
     shell:
         """
-        awk 'BEGIN {{ FS = "\\t" }}; OFS = "\\t" {{print $1, $2, $3, $6, $7, $8}}' \
-          {input.report} > {output.pavian}
+        kraken2 \
+        --db {params.ref}  \
+        --confidence 0.15 \
+        --minimum-hit-groups 3 \
+        --threads {threads} \
+        --output {output.out} \
+        --report {output.report}  \
+        --report-minimizer-data \
+        --paired \
+        --gzip-compressed {input.r1} {input.r2}
         """
+        
+rule barlett:
+    input:
+       r1 = rules.merge_lanes.output.r1,
+       r2 = rules.merge_lanes.output.r2
+    output:
+        bam = "output/bam/{sample}.bam",
+    params:
+        ref = config["barlett"]
+    shell:
+       """
+       bowtie2 --local --sensitive --threads 30  \
+       -x {params.ref} \
+       -1 {input.r1} -2 {input.r2} |
+       samtools view -bS | samtools sort -o {output.bam}
+       """
 
