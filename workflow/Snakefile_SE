@@ -342,4 +342,4 @@ rule analyse:
         tpos_html = "output/analysis/tpos_report.html",
     threads: 4
     shell:
-        "conda run -n cub python /mnt/san/microbio/apps/cub/scripts/analyse.py"
+        "/mnt/san/microbio/conda/envs/cub/bin/python /mnt/san/microbio/apps/cub/scripts/analyse.py"
