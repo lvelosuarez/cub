@@ -47,7 +47,7 @@ def get_sample_df() -> pd.DataFrame:
     """
     path = os.getcwd()
     samples = defaultdict(dict)
-    excluded_dirs = {"output", "results", "output_no_sex_chr"}
+    excluded_dirs = {"output", "results", "output_no_sex_chr", "output_eupathdb_old"}
 
     for dirpath, dirnames, files in os.walk(os.path.abspath(path)):
         dirnames[:] = [d for d in dirnames if d not in excluded_dirs]
