@@ -215,6 +215,7 @@ rule dehost:
           --index human-t2t-hla-argos985-mycob140 \
           --aligner bowtie2 --airplane \
           -o output/dehost/ --threads {threads} --force
+        mv output/dehost/{wildcards.names}_R1.clean.fastq.gz {output.r1}
         """
 
 
