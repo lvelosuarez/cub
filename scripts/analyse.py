@@ -763,9 +763,10 @@ def _count_microbial_reads(path: str) -> int:
 def _read_nreads(folder: str) -> pl.DataFrame:
     path = os.path.join(BASE, folder, "output", "Nreads.csv")
     return (
-        pl.read_csv(path)
-        .rename({"sample": "sample_id", "dedup_reads": "total_reads"})
-        .with_columns(pl.col("sample_id").str.replace(r"_S[0-9]+.*$", ""))
+        pl.read_csv(path, has_header=False, new_columns=["filename", "total_reads"])
+        .with_columns(
+            pl.col("filename").str.replace("_dedup_R1.fastq.gz", "").alias("sample_core")
+        )
     )
 
 
@@ -984,6 +985,15 @@ def main():
     print(f"\nParsing SampleSheet for run folder: {folder}")
     cohort = cohort_from_samplesheet(folder, args.run_id)
 
+    # Resolve disk-level names: Snakemake adds _S\d+ suffix absent from SampleSheet
+    import re as _re
+    nreads_raw = _read_nreads(folder)
+    _core_map = {_re.sub(r"_S\d+$", "", sc): sc for sc in nreads_raw["sample_core"].to_list()}
+    for s in cohort:
+        disk_name = _core_map.get(s["sample_id"], s["sample_id"])
+        s["sample"] = disk_name
+        s.update(_paths(s["folder"], disk_name))
+
     patients_dna = [s for s in cohort if not s["is_blank"] and "TPOS" not in s["sample_id"] and s["lib_type"] == "DNA"]
     tenv_dna     = [s for s in cohort if s["is_blank"]     and "TPOS" not in s["sample_id"] and s["lib_type"] == "DNA"]
     tpos_dna     = [s for s in cohort if "TPOS" in s["sample_id"]                           and s["lib_type"] == "DNA"]
@@ -1037,11 +1047,10 @@ def main():
 
     # ── RPM normalisation ─────────────────────────────────────────────────────
     print("\nComputing microbial reads + RPM normalisation...")
-    nreads_df = _read_nreads(folder)
     lib_sizes = []
     for s in patients_dna + tenv_dna:
         microbial = _count_microbial_reads(s["p_k1"])
-        nrow = nreads_df.filter(pl.col("sample_id") == s["sample_id"])
+        nrow = nreads_raw.filter(pl.col("sample_core") == s["sample"])
         lib_sizes.append({
             "sample_id":       s["sample_id"],
             "microbial_reads": microbial,
