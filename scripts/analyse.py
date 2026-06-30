@@ -59,7 +59,7 @@ GENUS_LEVEL_COLLAPSE = {
 
 P_KRAKEN2_NODES  = "/mnt/san/microbio/database/kraken2/PlusPF20260226/nodes.dmp"
 P_KRAKEN2_NAMES  = "/mnt/san/microbio/database/kraken2/PlusPF20260226/names.dmp"
-P_EUPATH_INSPECT = "/mnt/san/microbio/database/kraken2/eupathdb48_20230407/inspect.txt"
+P_EUPATH_INSPECT = "/mnt/san/microbio/database/kraken2/eupathdb68_20260629/inspect.txt"
 P_TAXMAP         = "/mnt/san/microbio/apps/cub/resources/bartlett_kraken2_index.tsv"
 BASE             = "/mnt/san/microbio/metagenomique_clinique"
 
