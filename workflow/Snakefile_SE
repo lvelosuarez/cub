@@ -189,7 +189,7 @@ rule dedup:
     input:
         r1 = "output/qc/{names}_R1.fastq.gz",
     output:
-        r1 = "output/dedup/{names}_dedup_R1.fastq.gz",
+        r1 = "output/qc/{names}_R1.fastq.gz",
     log:
         "output/qc/{names}_dedup.log",
     shell:
@@ -204,7 +204,7 @@ rule dedup:
 
 rule dehost:
     input:
-        r1 = "output/dedup/{names}_dedup_R1.fastq.gz",
+        r1 = "output/qc/{names}_R1.fastq.gz",
     output:
         r1 = "output/dehost/{names}_dedup_R1.clean.fastq.gz",
     threads: 10
