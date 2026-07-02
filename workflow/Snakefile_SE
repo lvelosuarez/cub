@@ -47,7 +47,7 @@ def get_sample_df() -> pd.DataFrame:
     """
     path = os.getcwd()
     samples = defaultdict(dict)
-    excluded_dirs = {"output", "results", "output_no_sex_chr"}
+    excluded_dirs = {"output", "results", "output_no_sex_chr", "output_eupathdb_old"}
 
     for dirpath, dirnames, files in os.walk(os.path.abspath(path)):
         dirnames[:] = [d for d in dirnames if d not in excluded_dirs]
@@ -150,11 +150,13 @@ rule all:
         expand("output/kraken2/{sample}.krk",                   sample=SAMPLE_CORES),
         expand("output/kraken2_eupathdb/{sample}.krk",          sample=SAMPLE_CORES),
         expand("output/kraken2_helminth/{sample}.krk",          sample=SAMPLE_CORES),
-        
-        #"output/Nreads.csv",
+        "output/Nreads.csv",
+        "output/analysis/cohort_norm.parquet",
+        "output/analysis/tpos_qc.parquet",
+        "output/analysis/tpos_report.html",
 
 
-include: "rules/count.smk"
+include: "rules/count_claude_SE.smk"
 
 rule qc:
      input:
@@ -324,3 +326,19 @@ rule coverage:
         """
         samtools coverage {input.bam} -o {output.txt}
         """
+
+
+rule analyse:
+    input:
+        k1       = expand("output/kraken2/{sample}.krk",          sample=SAMPLE_CORES),
+        k2       = expand("output/kraken2_eupathdb/{sample}.krk",  sample=SAMPLE_CORES),
+        k3       = expand("output/kraken2_helminth/{sample}.krk",  sample=SAMPLE_CORES),
+        bam      = expand("output/bam/{sample}.bam",               sample=SAMPLE_CORES),
+        nreads   = "output/Nreads.csv",
+    output:
+        parquet   = "output/analysis/cohort_norm.parquet",
+        tpos_qc   = "output/analysis/tpos_qc.parquet",
+        tpos_html = "output/analysis/tpos_report.html",
+    threads: 4
+    shell:
+        "conda run -n cub python /mnt/san/microbio/apps/cub/scripts/analyse.py"
