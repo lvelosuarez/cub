@@ -342,7 +342,7 @@ rule analyse:
         tpos_html = "output/analysis/tpos_report.htmlc",
     threads: 4
     shell:
-        "conda run -n cub python /mnt/san/microbio/apps/cub/scripts/analyse.py"
+        "micromamba run -n cub python /mnt/san/microbio/apps/cub/scripts/analyse.py"
 
 rule html_front:
     input:
