@@ -5,7 +5,7 @@
 # e.g.  TPOS-ADN_S8_L002_dedup_R1.clean_1.fastq.gz  →  TPOS-ADN
 AWK_SUM_BY_CORE = r"""awk 'NR>1 {
     name = $1;
-    gsub(/_S[0-9]+_L[0-9]+_dedup_R1\.clean_1\.fastq\.gz$/, "", name);
+    gsub(/_S[0-9]+_L[0-9]+_dedup_R1\.clean\.fastq\.gz$/, "", name);
     sum[name] += $4
 } END {
     for (s in sum) print s "," sum[s]
@@ -64,7 +64,7 @@ rule count_dedup_reads:
 rule count_dehost_reads:
     input:
         r1 = expand(
-            "output/dehost/{names}_dedup_R1.clean_1.fastq.gz",
+            "output/dehost/{names}_dedup_R1.clean.fastq.gz",
             names = SAMPLES["names"].tolist()     # <-- same pattern as rule all
         )
     output:
