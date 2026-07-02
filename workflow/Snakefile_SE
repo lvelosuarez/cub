@@ -154,6 +154,7 @@ rule all:
         "output/analysis/cohort_norm.parquet",
         "output/analysis/tpos_qc.parquet",
         "output/analysis/tpos_report.html",
+        
 
 
 include: "rules/count_claude_SE.smk"
@@ -338,7 +339,20 @@ rule analyse:
     output:
         parquet   = "output/analysis/cohort_norm.parquet",
         tpos_qc   = "output/analysis/tpos_qc.parquet",
-        tpos_html = "output/analysis/tpos_report.html",
+        tpos_html = "output/analysis/tpos_report.htmlc",
     threads: 4
     shell:
         "conda run -n cub python /mnt/san/microbio/apps/cub/scripts/analyse.py"
+
+rule html_front:
+    input:
+        cohort = "output/analysis/cohort_norm.parquet",
+        
+    output:
+        html_out = "output/analysis/final_result.html"
+    params:
+        template = "/mnt/san/microbio/apps/cub/scripts/html_template.html"
+    shell:
+        """
+        micromamba run -n cub python /mnt/san/microbio/apps/cub/scripts/html_generator.py --parquet {input.cohort} --template {params.template} --output {output.html_out}
+        """

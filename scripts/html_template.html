@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patient Results Explorer</title>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --accent: #2563eb;
+    --accent-light: #eff6ff;
+    --border: #e2e8f0;
+    --text: #1e293b;
+    --muted: #64748b;
+    --positive: #16a34a;
+    --negative: #dc2626;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 2rem;
+  }
+
+  header { margin-bottom: 1.5rem; }
+
+  header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  header p {
+    color: var(--muted);
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+  }
+
+  /* ── Tab menu ─────────────────────────────────────────────────────────── */
+  .tab-menu {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tab-btn {
+    padding: 0.6rem 1.2rem;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--muted);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+
+  .tab-btn:hover { color: var(--accent); }
+
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .card h2 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-bottom: 1rem;
+  }
+
+  .btn-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+  .pill-btn {
+    padding: 0.35rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: white;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+
+  .pill-btn:hover:not(:disabled) {
+    background: var(--accent-light);
+    border-color: var(--accent);
+  }
+
+  .pill-btn.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+
+  .pill-btn.toggle-on { background: var(--accent); color: white; border-color: var(--accent); }
+
+  .filters-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    align-items: flex-start;
+  }
+
+  .filter-group label.group-label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.5rem;
+  }
+
+  .table-wrapper { overflow-x: auto; }
+
+  .table-meta { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.75rem; }
+
+  .hidden-cols-strip {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+  }
+
+  .hidden-col-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: var(--accent-light);
+    border: 1px solid #bfdbfe;
+    border-radius: 4px;
+    padding: 0.15rem 0.5rem;
+    cursor: pointer;
+    font-size: 0.78rem;
+    color: var(--accent);
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+
+  thead th {
+    background: var(--accent);
+    color: white;
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    user-select: none;
+  }
+
+  thead th .col-label { cursor: pointer; }
+  thead th .col-label:hover { text-decoration: underline; }
+
+  thead th .col-hide-btn {
+    margin-left: 0.5rem;
+    background: none;
+    border: none;
+    color: white;
+    opacity: 0.65;
+    cursor: pointer;
+    font-size: 0.85em;
+  }
+  thead th .col-hide-btn:hover { opacity: 1; }
+
+  tbody tr:nth-child(even) { background: #f8fafc; }
+  tbody tr:hover { background: var(--accent-light); }
+
+  tbody td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .no-data { color: var(--muted); font-style: italic; padding: 1rem 0; }
+
+  .pagination { display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
+
+  .pagination button {
+    padding: 0.35rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: white;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+
+  .pagination button:hover:not(:disabled) { background: var(--accent-light); border-color: var(--accent); }
+  .pagination button:disabled { opacity: 0.4; cursor: default; }
+  .pagination button.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .pagination .page-info { font-size: 0.8rem; color: var(--muted); margin-left: 0.5rem; }
+
+  /* ── QC tab ───────────────────────────────────────────────────────────── */
+  .qc-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+  }
+
+  @media (max-width: 800px) {
+    .qc-metrics-grid { grid-template-columns: 1fr 1fr; }
+  }
+
+  .qc-metric-box {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .qc-metric-box label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .qc-metric-value {
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .qc-flag-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+
+  .qc-flag-pass { background: #dcfce7; color: var(--positive); }
+  .qc-flag-fail { background: #fee2e2; color: var(--negative); }
+
+  .organism-row {
+    display: grid;
+    grid-template-columns: 200px 1fr 70px 130px;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .organism-name { font-size: 0.85rem; font-weight: 500; }
+
+  .organism-bars { display: flex; flex-direction: column; gap: 2px; }
+
+  .bar-track {
+    position: relative;
+    height: 14px;
+    background: #f1f5f9;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    border-radius: 2px;
+  }
+
+  .bar-fill.detected { background: var(--positive); }
+  .bar-fill.not-detected { background: var(--negative); }
+
+  .organism-log2fc, .organism-tier { font-size: 0.8rem; color: var(--text); text-align: right; }
+
+  .qc-axis-row {
+    display: grid;
+    grid-template-columns: 200px 1fr 70px 130px;
+    gap: 0.75rem;
+    font-size: 0.7rem;
+    color: var(--muted);
+    margin-top: 0.5rem;
+  }
+
+  .qc-axis-ticks { display: flex; justify-content: space-between; }
+
+  .reads-bar-cell {
+    position: relative;
+    padding: 0.35rem 0.6rem;
+    min-width: 110px;
+  }
+
+  .reads-bar-track {
+    position: relative;
+    height: 18px;
+    background: #f1f5f9;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 2px;
+  }
+
+  .reads-bar-fill {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    background: var(--positive);
+    border-radius: 3px;
+  }
+
+  .reads-bar-label { font-size: 0.78rem; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Patient Results Explorer</h1>
+  <p>Select a patient to view metagenomic data, or switch to Quality Control.</p>
+</header>
+
+<div class="tab-menu">
+  <button class="tab-btn active" id="tab-btn-patient">Patient</button>
+  <button class="tab-btn" id="tab-btn-qc">Quality Control</button>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     PATIENT TAB
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="tab-panel active" id="tab-panel-patient">
+
+  <div class="card">
+    <h2>Patient</h2>
+    <div class="btn-row" id="patient-buttons"></div>
+  </div>
+
+  <div class="card">
+    <h2>Filters</h2>
+    <div class="filters-row">
+      <div class="filter-group">
+        <label class="group-label">Kingdom</label>
+        <div class="btn-row" id="kingdom-buttons"></div>
+      </div>
+      <div class="filter-group">
+        <label class="group-label">Exclusion</label>
+        <div class="btn-row">
+          <button id="pass-filter-toggle" class="pill-btn">Show PASS only</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Metagenomic Data</h2>
+    <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+      <label style="font-size:0.85rem;color:var(--muted);font-weight:600;">Rows per page:
+        <select id="rows-per-page" style="margin-left:0.4rem;padding:0.3rem 0.5rem;border:1px solid var(--border);border-radius:5px;font-size:0.85rem;">
+          <option value="10">10</option>
+          <option value="25" selected>25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
+    </div>
+    <div class="hidden-cols-strip" id="hidden-cols-strip"></div>
+    <div class="table-meta" id="table-meta"></div>
+    <div class="table-wrapper">
+      <table id="data-table">
+        <thead id="table-head"></thead>
+        <tbody id="table-body"></tbody>
+      </table>
+      <p class="no-data" id="no-data-msg">Select a patient to load data.</p>
+    </div>
+    <div class="pagination" id="pagination"></div>
+  </div>
+
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     QUALITY CONTROL TAB
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="tab-panel" id="tab-panel-qc">
+
+  <div id="qc-empty-msg" class="card" style="display:none;">
+    <p class="no-data">No QC data available for this run.</p>
+  </div>
+
+  <div id="qc-content" style="display:none;">
+
+    <div class="card">
+      <h2>TPOS QC Summary</h2>
+      <div class="qc-metrics-grid">
+        <div class="qc-metric-box">
+          <label>Overall QC flag</label>
+          <div id="qc-flag" class="qc-metric-value">—</div>
+        </div>
+        <div class="qc-metric-box">
+          <label>MUST_DETECT rate</label>
+          <div id="qc-must-detect-rate" class="qc-metric-value">—</div>
+        </div>
+        <div class="qc-metric-box">
+          <label>LOD</label>
+          <div id="qc-lod" class="qc-metric-value">—</div>
+        </div>
+        <div class="qc-metric-box">
+          <label>Spearman rho</label>
+          <div id="qc-spearman" class="qc-metric-value">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Organism-level results</h2>
+      <div id="organism-chart"></div>
+      <div class="qc-axis-row">
+        <div></div>
+        <div class="qc-axis-ticks" id="qc-axis-ticks"></div>
+        <div>log2FC</div>
+        <div>Tier</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Detection by tier</h2>
+      <div class="table-wrapper">
+        <table id="tier-table">
+          <thead>
+            <tr><th>Detection tier</th><th>n expected</th><th>n detected</th><th>Detection rate</th></tr>
+          </thead>
+          <tbody id="tier-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Per-sample reads</h2>
+      <div class="table-wrapper">
+        <table id="reads-table">
+          <thead>
+            <tr>
+              <th>Sample ID</th>
+              <th>Library size</th>
+              <th>Microbial reads</th>
+              <th>Bacteria (PASS)</th>
+              <th>Eukaryota (PASS)</th>
+              <th>Viruses (PASS)</th>
+            </tr>
+          </thead>
+          <tbody id="reads-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+const PATIENT_DATA = __PATIENT_DATA_JSON__;
+const QC_SUMMARY   = __QC_SUMMARY_JSON__;
+const QC_READS     = __QC_READS_JSON__;
+
+const KNOWN_KINGDOMS = ["Bacteria", "Eukaryota", "Viruses"];
+
+// ── Tab switching ─────────────────────────────────────────────────────────
+const tabBtnPatient = document.getElementById("tab-btn-patient");
+const tabBtnQc       = document.getElementById("tab-btn-qc");
+const tabPanelPatient = document.getElementById("tab-panel-patient");
+const tabPanelQc       = document.getElementById("tab-panel-qc");
+
+function activateTab(tab) {
+  const isPatient = tab === "patient";
+  tabBtnPatient.classList.toggle("active", isPatient);
+  tabBtnQc.classList.toggle("active", !isPatient);
+  tabPanelPatient.classList.toggle("active", isPatient);
+  tabPanelQc.classList.toggle("active", !isPatient);
+}
+
+tabBtnPatient.addEventListener("click", () => activateTab("patient"));
+tabBtnQc.addEventListener("click", () => activateTab("qc"));
+
+// ── Patient tab state ────────────────────────────────────────────────────
+let currentPatient = null;
+let currentRows = [];
+let currentPage = 1;
+let filterPass = false;
+let kingdomActive = new Set(KNOWN_KINGDOMS);
+let hiddenColumns = new Set();
+let sortCol = null;
+let sortDir = 0; // 0=none 1=asc -1=desc
+
+const patientButtons = document.getElementById("patient-buttons");
+const kingdomButtons = document.getElementById("kingdom-buttons");
+const passFilterToggle = document.getElementById("pass-filter-toggle");
+const tableHead = document.getElementById("table-head");
+const tableBody = document.getElementById("table-body");
+const tableMeta = document.getElementById("table-meta");
+const noDataMsg = document.getElementById("no-data-msg");
+const pagination = document.getElementById("pagination");
+const rppSelect = document.getElementById("rows-per-page");
+const hiddenColsStrip = document.getElementById("hidden-cols-strip");
+
+function getRowsPerPage() { return parseInt(rppSelect.value); }
+
+function btnEl(label) {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.className = "pill-btn";
+  return b;
+}
+
+// ── Build patient buttons ────────────────────────────────────────────────
+PATIENT_DATA.forEach(patient => {
+  const b = btnEl(patient.sample_id);
+  b.addEventListener("click", () => {
+    currentPatient = patient;
+    patientButtons.querySelectorAll("button").forEach(x => x.classList.toggle("active", x === b));
+    selectPatient(patient);
+  });
+  patientButtons.appendChild(b);
+});
+
+// ── Build kingdom filter buttons ─────────────────────────────────────────
+KNOWN_KINGDOMS.forEach(k => {
+  const b = btnEl(k);
+  b.classList.add("active");
+  b.addEventListener("click", () => {
+    if (kingdomActive.has(k)) {
+      kingdomActive.delete(k);
+      b.classList.remove("active");
+    } else {
+      kingdomActive.add(k);
+      b.classList.add("active");
+    }
+    refresh();
+  });
+  kingdomButtons.appendChild(b);
+});
+
+passFilterToggle.addEventListener("click", () => {
+  filterPass = !filterPass;
+  passFilterToggle.classList.toggle("toggle-on", filterPass);
+  passFilterToggle.textContent = filterPass ? "\u2713 PASS only" : "Show PASS only";
+  refresh();
+});
+
+rppSelect.addEventListener("change", refresh);
+
+function selectPatient(patient) {
+  currentRows = patient.rows || [];
+  currentPage = 1;
+  renderTable(getVisibleRows(), currentPage);
+}
+
+function getVisibleRows() {
+  let rows = currentRows.filter(r => {
+    const kingdomOk = !KNOWN_KINGDOMS.includes(r["kingdom"]) || kingdomActive.has(r["kingdom"]);
+    const passOk = !filterPass || r["decontam_decision"] === "PASS";
+    return kingdomOk && passOk;
+  });
+  if (sortCol !== null && sortDir !== 0) {
+    rows = [...rows].sort((a, b) => {
+      const va = a[sortCol] ?? "";
+      const vb = b[sortCol] ?? "";
+      const na = parseFloat(va), nb = parseFloat(vb);
+      const cmp = (!isNaN(na) && !isNaN(nb)) ? na - nb : String(va).localeCompare(String(vb));
+      return sortDir * cmp;
+    });
+  }
+  return rows;
+}
+
+function renderHiddenColsStrip(columns) {
+  hiddenColsStrip.innerHTML = "";
+  if (hiddenColumns.size === 0) return;
+  const label = document.createElement("span");
+  label.textContent = "Hidden columns:";
+  hiddenColsStrip.appendChild(label);
+  hiddenColumns.forEach(col => {
+    const chip = document.createElement("span");
+    chip.className = "hidden-col-chip";
+    chip.textContent = col + " \u00d7";
+    chip.addEventListener("click", () => {
+      hiddenColumns.delete(col);
+      renderTable(getVisibleRows(), currentPage);
+    });
+    hiddenColsStrip.appendChild(chip);
+  });
+}
+
+function renderTable(rows, page) {
+  tableHead.innerHTML = "";
+  tableBody.innerHTML = "";
+
+  if (!rows || rows.length === 0) {
+    noDataMsg.style.display = "block";
+    noDataMsg.textContent = currentPatient ? "No data matches the current filters." : "Select a patient to load data.";
+    tableMeta.textContent = "";
+    pagination.innerHTML = "";
+    hiddenColsStrip.innerHTML = "";
+    return;
+  }
+
+  noDataMsg.style.display = "none";
+  const rpp = getRowsPerPage();
+  const allColumns = Object.keys(rows[0]);
+  const visibleColumns = allColumns.filter(c => !hiddenColumns.has(c));
+  const start = (page - 1) * rpp;
+  const pageRows = rows.slice(start, start + rpp);
+
+  renderHiddenColsStrip(allColumns);
+
+  const headTr = document.createElement("tr");
+  visibleColumns.forEach(col => {
+    const th = document.createElement("th");
+
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "col-label";
+    const isSorted = sortCol === col;
+    const arrow = isSorted ? (sortDir === 1 ? " \u25b2" : " \u25bc") : " \u21c5";
+    labelSpan.textContent = col + arrow;
+    labelSpan.addEventListener("click", () => {
+      if (sortCol === col) {
+        sortDir = sortDir === 1 ? -1 : sortDir === -1 ? 0 : 1;
+        if (sortDir === 0) sortCol = null;
+      } else {
+        sortCol = col; sortDir = 1;
+      }
+      currentPage = 1;
+      renderTable(getVisibleRows(), currentPage);
+    });
+
+    const hideBtn = document.createElement("button");
+    hideBtn.className = "col-hide-btn";
+    hideBtn.textContent = "\u00d7";
+    hideBtn.title = "Hide column";
+    hideBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hiddenColumns.add(col);
+      renderTable(getVisibleRows(), currentPage);
+    });
+
+    th.appendChild(labelSpan);
+    th.appendChild(hideBtn);
+    headTr.appendChild(th);
+  });
+  tableHead.appendChild(headTr);
+
+  pageRows.forEach(row => {
+    const tr = document.createElement("tr");
+    visibleColumns.forEach(col => {
+      const td = document.createElement("td");
+      const val = row[col];
+      td.textContent = (val === null || val === undefined) ? "" : val;
+      td.title = td.textContent;
+      tr.appendChild(td);
+    });
+    tableBody.appendChild(tr);
+  });
+
+  tableMeta.textContent = `${rows.length} row${rows.length !== 1 ? "s" : ""} \u00b7 showing ${start + 1}\u2013${Math.min(start + rpp, rows.length)}`;
+  renderPagination(rows.length, page);
+}
+
+function renderPagination(total, page) {
+  pagination.innerHTML = "";
+  const rpp = getRowsPerPage();
+  const totalPages = Math.ceil(total / rpp);
+  if (totalPages <= 1) return;
+
+  const prev = document.createElement("button");
+  prev.textContent = "\u2039 Prev"; prev.disabled = page === 1;
+  prev.onclick = () => goToPage(page - 1);
+  pagination.appendChild(prev);
+
+  const range = [];
+  for (let i = Math.max(1, page - 2); i <= Math.min(totalPages, page + 2); i++) range.push(i);
+
+  if (range[0] > 1) { const d = document.createElement("span"); d.textContent = "\u2026"; d.className = "page-info"; pagination.appendChild(d); }
+
+  range.forEach(p => {
+    const btn = document.createElement("button");
+    btn.textContent = p;
+    if (p === page) btn.classList.add("active");
+    btn.onclick = () => goToPage(p);
+    pagination.appendChild(btn);
+  });
+
+  if (range[range.length - 1] < totalPages) { const d = document.createElement("span"); d.textContent = "\u2026"; d.className = "page-info"; pagination.appendChild(d); }
+
+  const next = document.createElement("button");
+  next.textContent = "Next \u203a"; next.disabled = page === totalPages;
+  next.onclick = () => goToPage(page + 1);
+  pagination.appendChild(next);
+}
+
+function goToPage(p) { currentPage = p; renderTable(getVisibleRows(), currentPage); }
+function refresh() { currentPage = 1; renderTable(getVisibleRows(), currentPage); }
+
+// ════════════════════════════════════════════════════════════════════════
+// QUALITY CONTROL TAB
+// ════════════════════════════════════════════════════════════════════════
+
+function fmtPct(v) {
+  if (v === null || v === undefined) return "\u2014";
+  return (typeof v === "number" ? v : parseFloat(v)).toString() + "%";
+}
+
+function renderQcTab() {
+  const emptyMsg = document.getElementById("qc-empty-msg");
+  const content = document.getElementById("qc-content");
+
+  content.style.display = "block";
+
+  if (!QC_SUMMARY) {
+    emptyMsg.style.display = "block";
+  } else {
+    emptyMsg.style.display = "none";
+
+    // ── Header metrics ──────────────────────────────────────────────────
+    const flagEl = document.getElementById("qc-flag");
+    const flag = QC_SUMMARY.overall_flag;
+    const badge = document.createElement("span");
+    badge.className = "qc-flag-badge " + (flag === "PASS" ? "qc-flag-pass" : "qc-flag-fail");
+    badge.textContent = flag ?? "\u2014";
+    flagEl.innerHTML = "";
+    flagEl.appendChild(badge);
+
+    document.getElementById("qc-must-detect-rate").textContent =
+      (QC_SUMMARY.must_detect_rate === null || QC_SUMMARY.must_detect_rate === undefined)
+        ? "\u2014" : fmtPct(QC_SUMMARY.must_detect_rate * (QC_SUMMARY.must_detect_rate <= 1 ? 100 : 1));
+    document.getElementById("qc-lod").textContent = QC_SUMMARY.lod ?? "nothing detected";
+    document.getElementById("qc-spearman").textContent = QC_SUMMARY.spearman_rho ?? "insufficient data";
+
+    // ── Organism chart ──────────────────────────────────────────────────
+    const organisms = QC_SUMMARY.organisms || [];
+    const chartEl = document.getElementById("organism-chart");
+    chartEl.innerHTML = "";
+
+    const allVals = [];
+    organisms.forEach(o => {
+      if (o.expected_pct > 0) allVals.push(o.expected_pct);
+      if (o.observed_pct > 0) allVals.push(o.observed_pct);
+    });
+    const minVal = allVals.length ? Math.min(...allVals) : 0.001;
+    const maxVal = allVals.length ? Math.max(...allVals, 100) : 100;
+    const floor = minVal / 10;
+    const logMin = Math.log10(floor);
+    const logMax = Math.log10(Math.max(maxVal, 100));
+
+    function valueToPct(v) {
+      const effective = (v === 0 || v === null || v === undefined) ? floor : v;
+      const logV = Math.log10(effective);
+      return Math.max(0, Math.min(100, ((logV - logMin) / (logMax - logMin)) * 100));
+    }
+
+    organisms.forEach(o => {
+      const row = document.createElement("div");
+      row.className = "organism-row";
+
+      const nameEl = document.createElement("div");
+      nameEl.className = "organism-name";
+      nameEl.textContent = o.organism;
+
+      const barsEl = document.createElement("div");
+      barsEl.className = "organism-bars";
+
+      const detClass = o.detected ? "detected" : "not-detected";
+
+      const expTrack = document.createElement("div");
+      expTrack.className = "bar-track";
+      expTrack.title = `Expected: ${fmtPct(o.expected_pct)}`;
+      const expFill = document.createElement("div");
+      expFill.className = "bar-fill " + detClass;
+      expFill.style.width = valueToPct(o.expected_pct) + "%";
+      expTrack.appendChild(expFill);
+
+      const obsTrack = document.createElement("div");
+      obsTrack.className = "bar-track";
+      obsTrack.title = `Observed: ${fmtPct(o.observed_pct)}`;
+      const obsFill = document.createElement("div");
+      obsFill.className = "bar-fill " + detClass;
+      obsFill.style.width = valueToPct(o.observed_pct) + "%";
+      obsTrack.appendChild(obsFill);
+
+      barsEl.appendChild(expTrack);
+      barsEl.appendChild(obsTrack);
+
+      const log2fcEl = document.createElement("div");
+      log2fcEl.className = "organism-log2fc";
+      log2fcEl.textContent = (o.log2fc === null || o.log2fc === undefined) ? "\u2014" : o.log2fc;
+
+      const tierEl = document.createElement("div");
+      tierEl.className = "organism-tier";
+      tierEl.textContent = o.tier ?? "";
+
+      row.appendChild(nameEl);
+      row.appendChild(barsEl);
+      row.appendChild(log2fcEl);
+      row.appendChild(tierEl);
+      chartEl.appendChild(row);
+    });
+
+    // ── Axis ticks ──────────────────────────────────────────────────────
+    const ticksEl = document.getElementById("qc-axis-ticks");
+    ticksEl.innerHTML = "";
+    const decadeStart = Math.floor(logMin);
+    const decadeEnd = Math.ceil(logMax);
+    for (let d = decadeStart; d <= decadeEnd; d++) {
+      const tick = document.createElement("span");
+      const v = Math.pow(10, d);
+      tick.textContent = v >= 1 ? v + "%" : v.toFixed(Math.abs(decadeStart)) + "%";
+      ticksEl.appendChild(tick);
+    }
+
+    // ── Detection-by-tier table ─────────────────────────────────────────
+    const tierBody = document.getElementById("tier-table-body");
+    tierBody.innerHTML = "";
+    (QC_SUMMARY.detection_by_tier || []).forEach(t => {
+      const tr = document.createElement("tr");
+      [t.tier, t.n_expected, t.n_detected, fmtPct((t.detection_rate ?? 0) * 100)].forEach(v => {
+        const td = document.createElement("td");
+        td.textContent = v;
+        tr.appendChild(td);
+      });
+      tierBody.appendChild(tr);
+    });
+
+  } // end else (QC_SUMMARY present)
+
+  // ── Per-sample reads table — always rendered ────────────────────────
+  const readsBody = document.getElementById("reads-table-body");
+  readsBody.innerHTML = "";
+  (QC_READS || []).forEach(r => {
+    const tr = document.createElement("tr");
+
+    const sidTd = document.createElement("td");
+    sidTd.textContent = r.sample_id;
+    tr.appendChild(sidTd);
+
+    const libTd = document.createElement("td");
+    libTd.textContent = r.library_size ?? "";
+    tr.appendChild(libTd);
+
+    const micRatio = (r.library_size && r.microbial_reads !== null)
+      ? (r.microbial_reads / r.library_size) * 100 : 0;
+    tr.appendChild(makeReadsBarCell(r.microbial_reads, micRatio));
+
+    KNOWN_KINGDOMS.forEach(k => {
+      const count = (r.kingdom_pass && r.kingdom_pass[k]) || 0;
+      const total = (r.kingdom_total && r.kingdom_total[k]) || 0;
+      const ratio = total ? (count / total) * 100 : 0;
+      tr.appendChild(makeReadsBarCell(count, ratio));
+    });
+    
+    readsBody.appendChild(tr);
+  });
+}
+
+function makeReadsBarCell(value, pct) {
+  const td = document.createElement("td");
+  const cell = document.createElement("div");
+  cell.className = "reads-bar-cell";
+
+  const labelEl = document.createElement("div");
+  labelEl.className = "reads-bar-label";
+  labelEl.textContent = (value === null || value === undefined) ? "" : value;
+
+  const track = document.createElement("div");
+  track.className = "reads-bar-track";
+  track.title = pct.toFixed(2) + "%";
+  const fill = document.createElement("div");
+  fill.className = "reads-bar-fill";
+  fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+  track.appendChild(fill);
+
+  cell.appendChild(labelEl);
+  cell.appendChild(track);
+  td.appendChild(cell);
+  return td;
+}
+
+renderQcTab();
+</script>
+</body>
+</html>
