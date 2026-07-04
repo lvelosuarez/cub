@@ -340,7 +340,7 @@ rule analyse:
     output:
         parquet   = "output/analysis/cohort_norm.parquet",
         tpos_qc   = "output/analysis/tpos_qc.parquet",
-        tpos_html = "output/analysis/tpos_report.htmlc",
+        tpos_html = "output/analysis/tpos_report.html",
     threads: 4
     shell:
         "micromamba run -n cub python /mnt/san/microbio/apps/cub/scripts/analyse.py"

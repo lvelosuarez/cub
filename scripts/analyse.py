@@ -61,6 +61,9 @@ P_KRAKEN2_NODES  = "/mnt/san/microbio/database/kraken2/PlusPF20260226/nodes.dmp"
 P_KRAKEN2_NAMES  = "/mnt/san/microbio/database/kraken2/PlusPF20260226/names.dmp"
 P_EUPATH_INSPECT = "/mnt/san/microbio/database/kraken2/eupathdb68_20260629/inspect.txt"
 P_TAXMAP         = "/mnt/san/microbio/apps/cub/resources/bartlett_kraken2_index.tsv"
+# NOTE: overridden at runtime in main() to the parent of the Snakemake working
+# directory, so {BASE}/{folder} always resolves back to cwd. The literal is a
+# placeholder only and is not read as-is.
 BASE             = "/mnt/san/microbio/metagenomique_clinique"
 
 P_CONTAMINANT_DB    = "/mnt/san/microbio/apps/cub/resources/decontam/contaminant_db.parquet"
@@ -976,6 +979,12 @@ def main():
 
     run_dir = Path(os.getcwd())
     folder  = run_dir.name
+
+    # Resolve all inputs relative to the actual working dir Snakemake set with
+    # --directory: {BASE}/{folder} == run_dir.parent/run_dir.name == cwd.
+    global BASE
+    BASE = str(run_dir.parent)
+
     out_dir = run_dir / "output" / "analysis"
     out_dir.mkdir(parents=True, exist_ok=True)
 
