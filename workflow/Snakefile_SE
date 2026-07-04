@@ -154,6 +154,7 @@ rule all:
         "output/analysis/cohort_norm.parquet",
         "output/analysis/tpos_qc.parquet",
         "output/analysis/tpos_report.html",
+        "output/analysis/final_result.html"
         
 
 
