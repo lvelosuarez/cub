@@ -16,19 +16,148 @@ Latest modification:
 """
 
 import os
+import sys
 from pathlib import Path
 import logging
 import re
 from collections import defaultdict
-
+import subprocess
 import pandas as pd
 
+# eligible run nas folders
+NAS_DIR = config.get("nas_dir", "/mnt/nas/R60-011/BACTERIOLOGIE/metagenomique_NextSeq/NOSCENDO")
+SAN_DIR = config.get("san_dir", "/mnt/san/microbio/metagenomique_clinique/cfdna_metagenomics")
+
+def notify(run, status, message=""):
+    """Central point for run status events. Logs now; will also send email later."""
+    full_status = f"{status}: {message}" if message else status
+    log_master(run, full_status)
+    # TODO: send email here later, based on `status` (e.g. STARTED / FAILED / COMPLETED)
+
+
+def get_eligible_runs(nas_dir):
+    """Folders with RTAComplete.txt and no Snakemake_complete.txt"""
+    eligible = []
+    for entry in os.listdir(nas_dir):
+        run_path = os.path.join(nas_dir, entry)
+        if not os.path.isdir(run_path):
+            continue
+        has_rta  = os.path.exists(os.path.join(run_path, "RTAComplete.txt"))
+        has_done = os.path.exists(os.path.join(run_path, "Snakemake_complete.txt"))
+        if has_rta and not has_done:
+            eligible.append(entry)
+    return eligible
+
+# copy from nas to san
+def log_line(run, message):
+    """Append a timestamped line to this run's pipeline.log on the SAN"""
+    log_path = os.path.join(SAN_DIR, run, "pipeline.log")
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    with open(log_path, "a") as f:
+        f.write(f"{pd.Timestamp.now()} | {message}\n")
+
+def log_master(run, status):
+    """Append one summary line per run to the global SAN log"""
+    master_path = os.path.join(SAN_DIR, "cron_master.log")
+    with open(master_path, "a") as f:
+        f.write(f"{pd.Timestamp.now()} | run={run} | status={status}\n")
+        
+def run_bcl2fastq(run):
+    """Generate fastq_out/ from raw BCL data for one run."""
+    run_dir = os.path.join(NAS_DIR, run)
+    out_dir = os.path.join(run_dir, "fastq_out")
+    sample_sheet = os.path.join(run_dir, "SampleSheet.csv")
+    stats_marker = os.path.join(out_dir, "Stats", "Stats.json")
+
+    if os.path.isfile(stats_marker):
+        log_line(run, f"bcl2fastq skipped, completed run already found at {stats_marker}")
+        return
+    
+    log_line(run, "bcl2fastq started")
+    result = subprocess.run(
+        [
+            "/mnt/san/microbio/conda/bcl2fastq",
+            "--runfolder-dir", run_dir,
+            "--output-dir", out_dir,
+            "--sample-sheet", sample_sheet,
+            "--no-lane-splitting",
+            "--barcode-mismatches", "1",
+            "--loading-threads", "4",
+            "--processing-threads", str(os.cpu_count()),
+            "--writing-threads", "12",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        log_line(run, f"bcl2fastq FAILED (exit {result.returncode}): {result.stderr[-2000:]}")
+        raise RuntimeError(f"bcl2fastq failed for {run} (exit {result.returncode})")
+
+    log_line(run, "bcl2fastq finished")
+
+    
+def stage_run(run):
+    """rsync fastq_out/ and SampleSheet.csv from NAS to SAN for one run"""
+    nas_run = os.path.join(NAS_DIR, run)
+    san_run = os.path.join(SAN_DIR, run)
+    os.makedirs(san_run, exist_ok=True)
+
+    log_line(run, "staging started")
+
+    r1 = subprocess.run(
+        ["rsync", "-avh", f"{nas_run}/fastq_out/", f"{san_run}/fastq_out/"],
+        capture_output=True, text=True,
+    )
+    if r1.returncode != 0:
+        log_line(run, f"rsync fastq_out FAILED (exit {r1.returncode}): {r1.stderr[-2000:]}")
+        raise RuntimeError(f"rsync fastq_out failed for {run}")
+
+    r2 = subprocess.run(
+        ["rsync", "-avh", f"{nas_run}/SampleSheet.csv", f"{san_run}/SampleSheet.csv"],
+        capture_output=True, text=True,
+    )
+    if r2.returncode != 0:
+        log_line(run, f"rsync SampleSheet.csv FAILED (exit {r2.returncode}): {r2.stderr[-2000:]}")
+        raise RuntimeError(f"rsync SampleSheet.csv failed for {run}")
+
+    log_line(run, "staging finished")
+
+RUNS = get_eligible_runs(NAS_DIR)
+
+if not RUNS:
+    notify("N/A", "NO_ELIGIBLE_RUNS")
+    sys.exit(0)
+
+CURRENT_RUN = RUNS[0]
+DRYRUN = False
+run_workdir = os.path.join(SAN_DIR, CURRENT_RUN)
+os.makedirs(run_workdir, exist_ok=True)
+os.chdir(run_workdir)
+
+pipeline_log_path = os.path.join(run_workdir, "pipeline.log")
+_log_fd = os.open(pipeline_log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+os.dup2(_log_fd, sys.stdout.fileno())
+os.dup2(_log_fd, sys.stderr.fileno())
+
+if DRYRUN:
+    notify(CURRENT_RUN, "DRYRUN", f"eligible runs: {RUNS}, would run: {CURRENT_RUN}")
+    sys.exit(0)
+else:
+    try:
+        notify(CURRENT_RUN, "STARTED")
+        run_bcl2fastq(CURRENT_RUN)
+        stage_run(CURRENT_RUN)
+        notify(CURRENT_RUN, "STAGING_COMPLETED")
+    except Exception as e:
+        notify(CURRENT_RUN, "STAGING_FAILED", str(e))
+        raise
 
 ###############################################
 # Sample table + helper functions
 ###############################################
 
-def get_sample_df() -> pd.DataFrame:
+def get_sample_df(run_path) -> pd.DataFrame:
     """
     Extract samples from NGS Illumina folder (single-end).
 
@@ -45,11 +174,10 @@ def get_sample_df() -> pd.DataFrame:
       - sample_core : unified sample ID (sample if available, else names)
       - R1          : raw fastq path (single-end)
     """
-    path = os.getcwd()
     samples = defaultdict(dict)
     excluded_dirs = {"output", "results", "output_no_sex_chr", "output_eupathdb_old"}
 
-    for dirpath, dirnames, files in os.walk(os.path.abspath(path)):
+    for dirpath, dirnames, files in os.walk(os.path.abspath(run_path)):
         dirnames[:] = [d for d in dirnames if d not in excluded_dirs]
 
         for fname in files:
@@ -91,7 +219,7 @@ def get_sample_df() -> pd.DataFrame:
     return df
 
 
-SAMPLES      = get_sample_df()
+SAMPLES      = get_sample_df(os.path.join(SAN_DIR, CURRENT_RUN))
 SAMPLE_CORES = sorted(SAMPLES["sample_core"].unique())
 
 
@@ -154,10 +282,18 @@ rule all:
         "output/analysis/cohort_norm.parquet",
         "output/analysis/tpos_qc.parquet",
         "output/analysis/tpos_report.html",
-        "output/analysis/final_result.html"
-        
+        os.path.join(NAS_DIR, CURRENT_RUN, "Snakemake_complete.txt"),
+        os.path.join(SAN_DIR, "all_html_results", f"{CURRENT_RUN}.html"),
 
+onstart:
+    notify(CURRENT_RUN, "SNAKEMAKE_STARTED")
 
+onsuccess:
+    notify(CURRENT_RUN, "SNAKEMAKE_COMPLETED")
+
+onerror:
+    notify(CURRENT_RUN, "SNAKEMAKE_FAILED")
+    
 include: "rules/count_claude_SE.smk"
 
 rule qc:
@@ -210,11 +346,13 @@ rule dehost:
     output:
         r1 = "output/dehost/{names}_dedup_R1.clean.fastq.gz",
     threads: 10
+    params:
+        index_path = config["hostile_index"]
     shell:
         """
         hostile clean \
           --fastq1 {input.r1} \
-          --index human-t2t-hla-argos985-mycob140 \
+          --index {params.index_path} \
           --aligner bowtie2 --airplane \
           -o output/dehost/ --threads {threads} --force
         """
@@ -340,20 +478,48 @@ rule analyse:
     output:
         parquet   = "output/analysis/cohort_norm.parquet",
         tpos_qc   = "output/analysis/tpos_qc.parquet",
-        tpos_html = "output/analysis/tpos_report.htmlc",
+        tpos_html = "output/analysis/tpos_report.html",
     threads: 4
     shell:
-        "micromamba run -n cub python /mnt/san/microbio/apps/cub/scripts/analyse.py"
+        """
+        python /mnt/san/microbio/apps/cub/scripts/analyse.py
+        """
 
 rule html_front:
     input:
         cohort = "output/analysis/cohort_norm.parquet",
-        
     output:
         html_out = "output/analysis/final_result.html"
     params:
         template = "/mnt/san/microbio/apps/cub/scripts/html_template.html"
     shell:
         """
-        micromamba run -n cub python /mnt/san/microbio/apps/cub/scripts/html_generator.py --parquet {input.cohort} --template {params.template} --output {output.html_out}
+        python /mnt/san/microbio/apps/cub/scripts/html_generator.py --parquet {input.cohort} --template {params.template} --output {output.html_out}
+        """
+
+rule copy_output_to_nas:
+    """Sync the whole SAN output/ folder back to the original NAS run folder,
+    then drop the completion marker that get_eligible_runs() checks for."""
+    input:
+        html = "output/analysis/final_result.html",
+    output:
+        marker = touch(os.path.join(NAS_DIR, CURRENT_RUN, "Snakemake_complete.txt"))
+    params:
+        dest = os.path.join(NAS_DIR, CURRENT_RUN, "output") + "/"
+    shell:
+        """
+        mkdir -p {params.dest}
+        rsync -rlvh --inplace --no-perms --no-times --omit-dir-times output/ {params.dest}
+        """
+
+rule archive_html_report:
+    """Drop a copy of the final report into the shared archive, named after the run."""
+    input:
+        html = "output/analysis/final_result.html",
+    output:
+        archived = os.path.join(SAN_DIR, "all_html_results", f"{CURRENT_RUN}.html")
+    shell:
+        """
+        mkdir -p $(dirname {output.archived})
+        cp {input.html} {output.archived}
         """
