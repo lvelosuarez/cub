@@ -512,10 +512,6 @@ rule copy_output_to_nas:
         rsync -rlvh --inplace --no-perms --no-times --omit-dir-times output/ {params.dest}
         """
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 68fd194a35e2a54ee02adb80131b915f7785aa89
 rule archive_html_report:
     """Drop a copy of the final report into the shared archive, named after the run."""
     input:
