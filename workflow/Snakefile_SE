@@ -28,11 +28,19 @@ import pandas as pd
 NAS_DIR = config.get("nas_dir", "/mnt/nas/R60-011/BACTERIOLOGIE/metagenomique_NextSeq/NOSCENDO")
 SAN_DIR = config.get("san_dir", "/mnt/san/microbio/metagenomique_clinique/cfdna_metagenomics")
 
+MAILER  = "/mnt/san/microbio/apps/cub/automation/noscendo_mail.py"
+MAIL_TO = "lourdesvelo@gmail.com, sacha.schutz@chu-brest.fr, clemence.beauruelle@chu-brest.fr, genevieve.hery-arnaud@chu-brest.fr, lourdes.velosuarez@chu-brest.fr"
+EMAIL_ON = {"STARTED", "SNAKEMAKE_COMPLETED", "STAGING_FAILED", "SNAKEMAKE_FAILED"}
+
 def notify(run, status, message=""):
     """Central point for run status events. Logs now; will also send email later."""
     full_status = f"{status}: {message}" if message else status
     log_master(run, full_status)
-    # TODO: send email here later, based on `status` (e.g. STARTED / FAILED / COMPLETED)
+    if status in EMAIL_ON:
+        try:
+            subprocess.run(["python", MAILER, "[cub] {}: {}".format(run, status), full_status, MAIL_TO], check=False)
+        except Exception:
+            pass
 
 
 def get_eligible_runs(nas_dir):
